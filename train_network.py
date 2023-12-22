@@ -1028,16 +1028,16 @@ class NetworkTrainer:
                         accelerator.wait_for_everyone()
                         if accelerator.is_main_process:
                             ckpt_name = train_util.get_step_ckpt_name(args, "." + args.save_model_as, global_step)
-
+                            
                             if args.enable_ema:
                                 if not args.ema_save_only_ema_weights:
                                     temp_name = train_util.get_step_ckpt_name(args, "", global_step) + "-non-EMA" + "." + args.save_model_as
-                                    save_model(temp_name, accelerator.unwrap_model(network), global_step, epoch)
+                                    save_model(temp_name, accelerator.unwrap_model(network), global_step, epoch, embeddings_map)
                                 with ema.ema_parameters(network.parameters()):
                                     print("Saving EMA:")
-                                    save_model(ckpt_name, accelerator.unwrap_model(network), global_step, epoch)
+                                    save_model(ckpt_name, accelerator.unwrap_model(network), global_step, epoch, embeddings_map)
                             else:    
-                                save_model(ckpt_name, accelerator.unwrap_model(network), global_step, epoch)
+                                save_model(ckpt_name, accelerator.unwrap_model(network), global_step, epoch, embeddings_map)
 
                             if args.save_state:
                                 train_util.save_and_remove_state_stepwise(args, accelerator, global_step)
@@ -1077,16 +1077,15 @@ class NetworkTrainer:
                 saving = (epoch + 1) % args.save_every_n_epochs == 0 and (epoch + 1) < num_train_epochs
                 if is_main_process and saving:
                     ckpt_name = train_util.get_epoch_ckpt_name(args, "." + args.save_model_as, epoch + 1)
-
                     if args.enable_ema:
                         if not args.ema_save_only_ema_weights:
                             temp_name = train_util.get_epoch_ckpt_name(args, "", epoch + 1) + "-non-EMA" + "." + args.save_model_as
-                            save_model(temp_name, accelerator.unwrap_model(network), global_step, epoch + 1)
+                            save_model(temp_name, accelerator.unwrap_model(network), global_step, epoch + 1, embeddings_map)
                         with ema.ema_parameters(network.parameters()):
                             print("Saving EMA:")
-                            save_model(ckpt_name, accelerator.unwrap_model(network), global_step, epoch + 1)
+                            save_model(ckpt_name, accelerator.unwrap_model(network), global_step, epoch + 1, embeddings_map)
                     else:
-                        save_model(ckpt_name, accelerator.unwrap_model(network), global_step, epoch + 1)
+                        save_model(ckpt_name, accelerator.unwrap_model(network), global_step, epoch + 1, embeddings_map)
 
                     remove_epoch_no = train_util.get_remove_epoch_no(args, epoch + 1)
                     if remove_epoch_no is not None:
@@ -1126,14 +1125,13 @@ class NetworkTrainer:
 
         if is_main_process:
             ckpt_name = train_util.get_last_ckpt_name(args, "." + args.save_model_as)
-
             if args.enable_ema and not args.ema_save_only_ema_weights:
                 temp_name = train_util.get_last_ckpt_name(args, "") + "-non-EMA" + "." + args.save_model_as
-                save_model(temp_name, network, global_step, num_train_epochs, force_sync_upload=True)
+                save_model(temp_name, network, global_step, num_train_epochs, embeddings_map, force_sync_upload=True)
             if args.enable_ema:
                 print("Saving EMA:")
                 ema.copy_to(network.parameters())
-            save_model(ckpt_name, network, global_step, num_train_epochs, force_sync_upload=True)
+            save_model(ckpt_name, network, global_step, num_train_epochs, embeddings_map, force_sync_upload=True)
 
             print("model saved.")
 
