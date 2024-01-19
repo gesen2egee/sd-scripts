@@ -3007,6 +3007,17 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         action="store_true",
         help="use memory efficient attention for CrossAttention / CrossAttentionに省メモリ版attentionを使う",
     )
+    parser.add_argument("--torch_compile", action="store_true", help="use torch.compile (requires PyTorch 2.0) / torch.compile を使う")
+    parser.add_argument(
+        "--dynamo_backend", 
+        type=str, 
+        default="inductor", 
+        # available backends:
+        # https://github.com/huggingface/accelerate/blob/d1abd59114ada8ba673e1214218cb2878c13b82d/src/accelerate/utils/dataclasses.py#L376-L388C5
+        # https://pytorch.org/docs/stable/torch.compiler.html
+        choices=["eager", "aot_eager", "inductor", "aot_ts_nvfuser", "nvprims_nvfuser", "cudagraphs", "ofi", "fx2trt", "onnxrt"], 
+        help="dynamo backend type (default is inductor) / dynamoのbackendの種類（デフォルトは inductor）"
+    )
     parser.add_argument("--xformers", action="store_true", help="use xformers for CrossAttention / CrossAttentionにxformersを使う")
     parser.add_argument(
         "--sdpa",
@@ -3052,6 +3063,9 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
     parser.add_argument(
         "--full_bf16", action="store_true", help="bf16 training including gradients / 勾配も含めてbf16で学習する"
     )  # TODO move to SDXL training, because it is not supported by SD1/2
+    parser.add_argument(
+        "--fp8_base", action="store_true", help="use fp8 for base model / base modelにfp8を使う"
+    )
     parser.add_argument(
         "--ddp_timeout",
         type=int,
@@ -4082,6 +4096,11 @@ def prepare_accelerator(args: argparse.Namespace):
                 os.environ["WANDB_DIR"] = logging_dir
             if args.wandb_api_key is not None:
                 wandb.login(key=args.wandb_api_key)
+    
+    # torch.compile のオプション。 NO の場合は torch.compile は使わない
+    dynamo_backend = "NO"
+    if args.torch_compile:
+        dynamo_backend = args.dynamo_backend
 
     kwargs_handlers = (
         InitProcessGroupKwargs(timeout=datetime.timedelta(minutes=args.ddp_timeout)) if args.ddp_timeout else None,
@@ -4096,6 +4115,7 @@ def prepare_accelerator(args: argparse.Namespace):
         log_with=log_with,
         project_dir=logging_dir,
         kwargs_handlers=kwargs_handlers,
+        dynamo_backend=dynamo_backend,
     )
     return accelerator
 
