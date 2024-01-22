@@ -3076,9 +3076,6 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
     )  # TODO move to SDXL training, because it is not supported by SD1/2
     parser.add_argument("--fp8_base", action="store_true", help="use fp8 for base model / base modelにfp8を使う")
     parser.add_argument(
-        "--fp8_base", action="store_true", help="use fp8 for base model / base modelにfp8を使う"
-    )
-    parser.add_argument(
         "--ddp_timeout",
         type=int,
         default=None,
