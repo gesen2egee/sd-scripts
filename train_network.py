@@ -398,6 +398,7 @@ class NetworkTrainer:
             )
         if network is None:
             return
+        network_has_multiplier = hasattr(network, "set_multiplier")
 
         if hasattr(network, "prepare_network"):
             network.prepare_network(args)
@@ -490,11 +491,10 @@ class NetworkTrainer:
         unet_weight_dtype = te_weight_dtype = weight_dtype
         # Experimental Feature: Put base model into fp8 to save vram
         if args.fp8_base:
+
+            assert torch.__version__ >= "2.1.0", "fp8_base requires torch>=2.1.0 / fp8を使う場合はtorch>=2.1.0が必要です。"
             assert (
-                torch.__version__ >= '2.1.0'
-            ), "fp8_base requires torch>=2.1.0 / fp8を使う場合はtorch>=2.1.0が必要です。"
-            assert (
-                args.mixed_precision != 'no'
+                args.mixed_precision != "no"
             ), "fp8_base requires mixed precision='fp16' or 'bf16' / fp8を使う場合はmixed_precision='fp16'または'bf16'が必要です。"
             accelerator.print("enable fp8 training.")
             unet_weight_dtype = torch.float8_e4m3fn
@@ -511,7 +511,12 @@ class NetworkTrainer:
                 if te_weight_dtype == torch.float8_e4m3fn 
                 else te_weight_dtype
             ))
-
+            # in case of cpu, dtype is already set to fp32 because cpu does not support fp8/fp16/bf16
+            if t_enc.device.type != "cpu":
+                t_enc.to(dtype=te_weight_dtype)
+                # nn.Embedding not support FP8
+                t_enc.text_model.embeddings.to(dtype=(weight_dtype if te_weight_dtype != weight_dtype else te_weight_dtype))
+                
         if args.enable_ema:
             ema_dtype = weight_dtype if (args.full_bf16 or args.full_fp16) else torch.float
             ema = EMAModel(network.parameters(), decay=args.ema_decay, beta=args.ema_exp_beta, max_train_steps=args.max_train_steps)
@@ -521,6 +526,7 @@ class NetworkTrainer:
             ema = None
         # acceleratorがなんかよろしくやってくれるらしい
         # TODO めちゃくちゃ冗長なのでコードを整理する
+        
         # acceleratorがなんかよろしくやってくれるらしい / accelerator will do something good
         
         if train_unet:
@@ -945,7 +951,17 @@ class NetworkTrainer:
                                 accelerator.print("NaN found in latents, replacing with zeros")
                                 latents = torch.nan_to_num(latents, 0, out=latents)
                         latents = latents * self.vae_scale_factor
-                    b_size = latents.shape[0]
+
+                    # get multiplier for each sample
+                    if network_has_multiplier:
+                        multipliers = batch["network_multipliers"]
+                        # if all multipliers are same, use single multiplier
+                        if torch.all(multipliers == multipliers[0]):
+                            multipliers = multipliers[0].item()
+                        else:
+                            raise NotImplementedError("multipliers for each sample is not supported yet")
+                        # print(f"set multiplier: {multipliers}")
+                        network.set_multiplier(multipliers)
 
 
                     with torch.set_grad_enabled(train_text_encoder or args.continue_inversion and global_step < args.stop_text_encoder_training), accelerator.autocast():
@@ -980,7 +996,14 @@ class NetworkTrainer:
                     # Predict the noise residual
                     with accelerator.autocast():
                         noise_pred = self.call_unet(
-                            args, accelerator, unet, noisy_latents.requires_grad_(train_unet), timesteps, text_encoder_conds, batch, weight_dtype
+                            args,
+                            accelerator,
+                            unet,
+                            noisy_latents.requires_grad_(train_unet),
+                            timesteps,
+                            text_encoder_conds,
+                            batch,
+                            weight_dtype,
                         )
 
                     if args.v_parameterization:
