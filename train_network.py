@@ -15,15 +15,10 @@ import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 from library.train_util import EMAModel
 
-try:
-    import intel_extension_for_pytorch as ipex
+from library.ipex_interop import init_ipex
 
-    if torch.xpu.is_available():
-        from library.ipex import ipex_init
+init_ipex()
 
-        ipex_init()
-except Exception:
-    pass
 from accelerate.utils import set_seed
 from diffusers import DDPMScheduler
 from library import model_util
@@ -41,6 +36,7 @@ import library.huggingface_util as huggingface_util
 import library.custom_train_functions as custom_train_functions
 from library.custom_train_functions import (
     apply_snr_weight,
+    apply_soft_snr_weight,
     get_weighted_text_embeddings,
     prepare_scheduler_for_custom_training,
     scale_v_prediction_loss_like_noise_prediction,
@@ -666,6 +662,7 @@ class NetworkTrainer:
             "ss_face_crop_aug_range": args.face_crop_aug_range,
             "ss_prior_loss_weight": args.prior_loss_weight,
             "ss_min_snr_gamma": args.min_snr_gamma,
+            "ss_soft_min_snr_gamma": args.soft_min_snr_gamma,
             "ss_scale_weight_norms": args.scale_weight_norms,
             "ss_ip_noise_gamma": args.ip_noise_gamma,
             "ss_debiased_estimation": bool(args.debiased_estimation_loss),
@@ -1030,10 +1027,11 @@ class NetworkTrainer:
                     loss = loss.mean()  # 平均なのでbatch_sizeで割る必要なし
 
                     accelerator.backward(loss)
-                    self.all_reduce_network(accelerator, network)  # sync DDP grad manually
-                    if accelerator.sync_gradients and args.max_grad_norm != 0.0:
-                        params_to_clip = accelerator.unwrap_model(network).get_trainable_params()
-                        accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
+                    if accelerator.sync_gradients:
+                        self.all_reduce_network(accelerator, network)  # sync DDP grad manually
+                        if args.max_grad_norm != 0.0:
+                            params_to_clip = accelerator.unwrap_model(network).get_trainable_params()
+                            accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
 
                     optimizer.step()
                     lr_scheduler.step()

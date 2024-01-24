@@ -12,15 +12,10 @@ import toml
 from tqdm import tqdm
 import torch
 
-try:
-    import intel_extension_for_pytorch as ipex
+from library.ipex_interop import init_ipex
 
-    if torch.xpu.is_available():
-        from library.ipex import ipex_init
+init_ipex()
 
-        ipex_init()
-except Exception:
-    pass
 from torch.nn.parallel import DistributedDataParallel as DDP
 from accelerate.utils import set_seed
 from diffusers import DDPMScheduler, ControlNetModel
@@ -37,6 +32,7 @@ import library.huggingface_util as huggingface_util
 import library.custom_train_functions as custom_train_functions
 from library.custom_train_functions import (
     apply_snr_weight,
+    apply_soft_snr_weight,
     pyramid_noise_like,
     apply_noise_offset,
 )
@@ -464,6 +460,8 @@ def train(args):
 
                 if args.min_snr_gamma:
                     loss = apply_snr_weight(loss, timesteps, noise_scheduler, args.min_snr_gamma, args.v_parameterization)
+                if args.soft_min_snr_gamma:
+                    loss = apply_soft_snr_weight(loss, timesteps, noise_scheduler, args.soft_min_snr_gamma, args.v_parameterization)
 
                 loss = loss.mean()  # 平均なのでbatch_sizeで割る必要なし
 

@@ -8,15 +8,10 @@ import toml
 from tqdm import tqdm
 import torch
 
-try:
-    import intel_extension_for_pytorch as ipex
+from library.ipex_interop import init_ipex
 
-    if torch.xpu.is_available():
-        from library.ipex import ipex_init
+init_ipex()
 
-        ipex_init()
-except Exception:
-    pass
 from accelerate.utils import set_seed
 from diffusers import DDPMScheduler
 from transformers import CLIPTokenizer
@@ -32,6 +27,7 @@ from library.config_util import (
 import library.custom_train_functions as custom_train_functions
 from library.custom_train_functions import (
     apply_snr_weight,
+    apply_soft_snr_weight,
     prepare_scheduler_for_custom_training,
     scale_v_prediction_loss_like_noise_prediction,
     add_v_prediction_like_loss,
@@ -509,7 +505,7 @@ class TextualInversionTrainer:
         if accelerator.is_main_process:
             init_kwargs = {}
             if args.wandb_run_name:
-                init_kwargs['wandb'] = {'name': args.wandb_run_name}
+                init_kwargs["wandb"] = {"name": args.wandb_run_name}
             if args.log_tracker_config is not None:
                 init_kwargs = toml.load(args.log_tracker_config)
             accelerator.init_trackers(
@@ -599,6 +595,8 @@ class TextualInversionTrainer:
 
                     if args.min_snr_gamma:
                         loss = apply_snr_weight(loss, timesteps, noise_scheduler, args.min_snr_gamma, args.v_parameterization)
+                    if args.soft_min_snr_gamma:
+                        loss = apply_soft_snr_weight(loss, timesteps, noise_scheduler, args.soft_min_snr_gamma, args.v_parameterization)
                     if args.scale_v_pred_loss_like_noise_pred:
                         loss = scale_v_prediction_loss_like_noise_prediction(loss, timesteps, noise_scheduler)
                     if args.v_pred_like_loss:
@@ -757,13 +755,12 @@ class TextualInversionTrainer:
         is_main_process = accelerator.is_main_process
         if is_main_process:
             text_encoder = accelerator.unwrap_model(text_encoder)
+            updated_embs = text_encoder.get_input_embeddings().weight[token_ids].data.detach().clone()
 
         accelerator.end_training()
 
         if args.save_state and is_main_process:
             train_util.save_state_on_train_end(args, accelerator)
-
-        updated_embs = text_encoder.get_input_embeddings().weight[token_ids].data.detach().clone()
 
         if is_main_process:
             ckpt_name = train_util.get_last_ckpt_name(args, "." + args.save_model_as)
