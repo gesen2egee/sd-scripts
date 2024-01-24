@@ -4523,7 +4523,12 @@ def save_sd_model_on_epoch_end_or_stepwise_common(
             if os.path.exists(remove_ckpt_file):
                 print(f"removing old checkpoint: {remove_ckpt_file}")
                 os.remove(remove_ckpt_file)
-
+                
+            remove_ckpt_file = remove_ckpt_file.replace(".safetensors", "-non-EMA.safetensors")
+            if os.path.exists(remove_ckpt_file):
+                print(f"removing old non EMA checkpoint: {remove_ckpt_file}")
+                os.remove(remove_ckpt_file)
+                
     else:
         if on_epoch_end:
             out_dir = os.path.join(args.output_dir, EPOCH_DIFFUSERS_DIR_NAME.format(model_name, epoch_no))

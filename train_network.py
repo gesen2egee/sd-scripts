@@ -564,9 +564,9 @@ class NetworkTrainer:
 
                 # Freeze all parameters except for the token embeddings in text encoder
                 t_enc.requires_grad_(True)
-                t_enc.text_model.encoder.requires_grad_(False)
-                t_enc.text_model.final_layer_norm.requires_grad_(False)
-                t_enc.text_model.embeddings.position_embedding.requires_grad_(False)
+                # t_enc.text_model.encoder.requires_grad_(False)
+                # t_enc.text_model.final_layer_norm.requires_grad_(False)
+                # t_enc.text_model.embeddings.position_embedding.requires_grad_(False)
                 # t_enc.text_model.embeddings.requires_grad_(True)
                 # t_enc.text_model.embeddings.token_embedding.requires_grad_(True)
 
