@@ -995,7 +995,6 @@ class NetworkTrainer:
                 #emas[0].copy_params_from_ema_to_model()
                 #ckpt_name = train_util.get_last_ckpt_name(args, "." + args.save_model_as)
                 #save_model(os.path.splitext(ckpt_name)[0] + "-EMA_" + os.path.splitext(ckpt_name)[1], network, global_step, num_train_epochs, force_sync_upload=True)
-
             print("model saved.")
 
 
