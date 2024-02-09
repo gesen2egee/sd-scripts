@@ -37,6 +37,7 @@ import library.huggingface_util as huggingface_util
 import library.custom_train_functions as custom_train_functions
 from library.custom_train_functions import (
     apply_snr_weight,
+    apply_soft_snr_weight,
     get_weighted_text_embeddings,
     prepare_scheduler_for_custom_training,
     scale_v_prediction_loss_like_noise_prediction,
@@ -535,6 +536,7 @@ class NetworkTrainer:
             "ss_face_crop_aug_range": args.face_crop_aug_range,
             "ss_prior_loss_weight": args.prior_loss_weight,
             "ss_min_snr_gamma": args.min_snr_gamma,
+            "ss_soft_min_snr_gamma": args.soft_min_snr_gamma,
             "ss_scale_weight_norms": args.scale_weight_norms,
             "ss_ip_noise_gamma": args.ip_noise_gamma,
             "ss_debiased_estimation": bool(args.debiased_estimation_loss),
@@ -758,12 +760,17 @@ class NetworkTrainer:
             current_epoch.value = epoch + 1
 
             metadata["ss_epoch"] = str(epoch + 1)
-
+                   
             accelerator.unwrap_model(network).on_epoch_start(text_encoder, unet)
-
+                            
             for step, batch in enumerate(train_dataloader):
                 current_step.value = global_step
                 with accelerator.accumulate(network):
+                    if global_step == args.stop_text_encoder_training:
+                        print(f"stop text encoder training at step {global_step}")
+                        if not args.gradient_checkpointing:
+                            text_encoder.train(False)
+                        text_encoder.requires_grad_(False)
                     on_step_start(text_encoder, unet)
 
                     with torch.no_grad():
@@ -790,7 +797,7 @@ class NetworkTrainer:
                         # print(f"set multiplier: {multipliers}")
                         accelerator.unwrap_model(network).set_multiplier(multipliers)
 
-                    with torch.set_grad_enabled(train_text_encoder), accelerator.autocast():
+                    with torch.set_grad_enabled(train_text_encoder and global_step < args.stop_text_encoder_training), accelerator.autocast():
                         # Get the text embedding for conditioning
                         if args.weighted_captions:
                             text_encoder_conds = get_weighted_text_embeddings(
@@ -865,7 +872,24 @@ class NetworkTrainer:
                     optimizer.step()
                     lr_scheduler.step()
                     optimizer.zero_grad(set_to_none=True)
+                    
+                    # Let's make sure we don't update any embedding weights besides the added pivots
+                    if args.continue_inversion:
+                        with torch.no_grad():
+                            for text_encoder, orig_embeds_params, index_no_updates in zip(
+                                text_encoders, orig_embeds_params_list, index_no_updates_list
+                            ):
+                                accelerator.unwrap_model(text_encoder).get_input_embeddings().weight[
+                                    index_no_updates
+                                ] = orig_embeds_params[index_no_updates]
 
+                            # Update embeddings map (for saving)
+                            # TODO: this is not optimal, might need to be refactored
+                            for emb_name in embeddings_map.keys():
+                                emb_token_ids = embedding_to_token_ids[emb_name]
+                                updated_embs = accelerator.unwrap_model(text_encoder).get_input_embeddings().weight[emb_token_ids].data.detach().clone()
+                                embeddings_map[emb_name] = updated_embs
+                                
                     if args.enable_ema:
                         for i, e in enumerate(emas):
                             if args.ema_type == "post-hoc" and ((e.step + 1) % e.post_hoc_snapshot_every) == 0 and e.step != 0:
@@ -1053,6 +1077,12 @@ def setup_parser() -> argparse.ArgumentParser:
         "--no_half_vae",
         action="store_true",
         help="do not use fp16/bf16 VAE in mixed precision (use float VAE) / mixed precisionでも fp16/bf16 VAEを使わずfloat VAEを使う",
+    )
+    parser.add_argument(
+        "--stop_text_encoder_training",
+        type=int,
+        default=None,
+        help="steps to stop text encoder training, -1 for no training / Text Encoderの学習を止めるステップ数、-1で最初から学習しない",
     )
     return parser
 
