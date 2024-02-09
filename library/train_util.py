@@ -18,7 +18,6 @@ from typing import (
     Sequence,
     Tuple,
     Union,
-    Callable,
 )
 from accelerate import Accelerator, InitProcessGroupKwargs, DistributedDataParallelKwargs
 import gc
@@ -756,7 +755,7 @@ class BaseDataset(torch.utils.data.Dataset):
                 if subset.use_object_template or subset.use_style_template:
                     imagenet_templates = imagenet_templates_small if subset.use_object_template else imagenet_style_templates_small
                     imagenet_template = [random.choice(imagenet_templates)]
-                    fixed_tokens = imagenet_template + fixed_tokens  
+                    caption = imagenet_template + fixed_tokens  
                 if subset.token_warmup_step < 1:  # 初回に上書きする
                     subset.token_warmup_step = math.floor(subset.token_warmup_step * self.max_train_steps)
                 if subset.token_warmup_step and self.current_step < subset.token_warmup_step:
@@ -2845,7 +2844,7 @@ def add_optimizer_arguments(parser: argparse.ArgumentParser):
         "--lr_scheduler",
         type=str,
         default="constant",
-        help="scheduler to use for learning rate / 学習率のスケジューラ: linear, cosine, cosine_with_restarts, polynomial, constant (default), constant_with_warmup, adafactor, rex",
+        help="scheduler to use for learning rate / 学習率のスケジューラ: linear, cosine, cosine_with_restarts, polynomial, constant (default), constant_with_warmup, adafactor",
     )
     parser.add_argument(
         "--lr_warmup_steps",
@@ -3917,31 +3916,6 @@ def get_optimizer(args, trainable_params):
     return optimizer_name, optimizer_args, optimizer
 
 
-def lr_lambda_warmup(warmup_steps: int, lr_lambda: Callable[[int], float]):
-    def warmup(current_step: int):
-        if current_step < warmup_steps:
-            return float(current_step) / float(warmup_steps)
-        else:
-            return lr_lambda(current_step - warmup_steps)
-    return warmup
-
-def lr_lambda_rex(
-        scheduler_steps: int,
-):
-    def lr_lambda(current_step: int):
-        # https://arxiv.org/abs/2107.04197
-        max_lr = 1
-        min_lr = 0.001
-        d = 0.9
-
-        if current_step < scheduler_steps:
-            progress = (current_step / scheduler_steps)
-            div = (1 - d) + (d * (1 - progress))
-            return min_lr + (max_lr - min_lr) * ((1 - progress) / div)
-        else:
-            return min_lr
-    return lr_lambda
-
 # Modified version of get_scheduler() function from diffusers.optimizer.get_scheduler
 # Add some checking and features to the original function.
 
@@ -3989,16 +3963,6 @@ def get_scheduler_fix(args, optimizer: Optimizer, num_processes: int):
         initial_lr = float(name.split(":")[1])
         # print("adafactor scheduler init lr", initial_lr)
         return wrap_check_needless_num_warmup_steps(transformers.optimization.AdafactorSchedule(optimizer, initial_lr))
-
-    if name.upper() == "REX":
-        scheduler_steps = num_training_steps - num_warmup_steps
-        lr_lambda = lr_lambda_rex(scheduler_steps, **lr_scheduler_kwargs)
-        if num_warmup_steps > 0:
-            lr_lambda = lr_lambda_warmup(num_warmup_steps, lr_lambda)
-        return torch.optim.lr_scheduler.LambdaLR(
-                optimizer=optimizer,
-                lr_lambda=lr_lambda,
-        )
 
     name = SchedulerType(name)
     schedule_func = TYPE_TO_SCHEDULER_FUNCTION[name]
