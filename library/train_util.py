@@ -64,6 +64,7 @@ from library.lpw_stable_diffusion import StableDiffusionLongPromptWeightingPipel
 import library.model_util as model_util
 import library.huggingface_util as huggingface_util
 import library.sai_model_spec as sai_model_spec
+from keras.preprocessing.image import ImageDataGenerator
 
 # from library.attention_processors import FlashAttnProcessor
 # from library.hypernetwork import replace_attentions_for_hypernetwork
@@ -403,29 +404,57 @@ class AugHelper:
         return {"image": image}
         
     def rotate_aug(self, image: np.ndarray):
-        angle = np.random.normal(0, 30)
-        rgb = image[..., :3]
-        
-        if image.shape[2] == 4:
-            a = image[..., 3]
+    
+        if random.random() <= 0.5:    
+            angle = np.random.normal(0, 15)
+            rgb = image[..., :3]
             
-        height, width = rgb.shape[:2]
-        center = (width / 2, height / 2)
-        rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
-        rotated_image = cv2.warpAffine(rgb, rotation_matrix, (width, height), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,0,0))
+            if image.shape[2] == 4:
+                a = image[..., 3]
+                
+            height, width = rgb.shape[:2]
+            center = (width / 2, height / 2)
+            rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+            image = cv2.warpAffine(rgb, rotation_matrix, (width, height), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,0,0))
 
-        if image.shape[2] == 4:
-            rotated_a = cv2.warpAffine(a, rotation_matrix, (width, height), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,))
-            rotated_image = np.dstack([rotated_image, rotated_a])
+            if image.shape[2] == 4:
+                rotated_a = cv2.warpAffine(a, rotation_matrix, (width, height), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,))
+                image = np.dstack([rotated_image, rotated_a])
+                
+        return {"image": image} 
 
-        return {"image": rotated_image} 
+    def keras_aug(self, image: np.ndarray, keras_aug):
 
-    def get_augmentor(self, color_aug=False, rotate_aug=False):
+        original_image_prob = 0
+        keras_augs_kwargs = {}
+        
+        for arg in keras_aug:
+            key, value = arg.split("=")
+            if key == "original_image":
+                original_image_prob = float(value)
+            else:
+                value = ast.literal_eval(value) 
+                keras_augs_kwargs[key] = value
+                
+        if random.random() <= original_image_prob:
+            return {"image": image}
+
+        datagen = ImageDataGenerator(**keras_augs_kwargs)
+        image = image.reshape((1,) + image.shape)
+        for batch in datagen.flow(image, batch_size=1):
+            image = batch[0]
+            break  
+        
+        return {"image": image}
+
+    def get_augmentor(self, color_aug=False, rotate_aug=False, keras_augs=None):
         def aug(image):
             if color_aug:
                 image = self.color_aug(image)["image"]
             if rotate_aug:
                 image = self.rotate_aug(image)["image"]
+            if keras_aug is not None:
+                image = self.keras_aug(image, keras_aug)["image"]
             return {"image": image}
         return aug
 
@@ -443,6 +472,7 @@ class BaseSubset:
         color_aug: bool,
         flip_aug: bool,
         rotate_aug: bool,
+        keras_aug: Optional[str],
         face_crop_aug_range: Optional[Tuple[float, float]],
         random_crop: bool,
         mask_simple_background: bool,
@@ -464,7 +494,8 @@ class BaseSubset:
         self.use_style_template = use_style_template 
         self.color_aug = color_aug
         self.flip_aug = flip_aug
-        self.rotate_aug = rotate_aug 
+        self.rotate_aug = rotate_aug
+        self.keras_aug = keras_aug        
         self.face_crop_aug_range = face_crop_aug_range
         self.random_crop = random_crop
         self.mask_simple_background = mask_simple_background
@@ -496,7 +527,8 @@ class DreamBoothSubset(BaseSubset):
         use_style_template,
         color_aug,
         flip_aug,
-        rotate_aug,
+        rotate_aug,   
+        keras_aug,
         face_crop_aug_range,
         random_crop,
         mask_simple_background: bool,
@@ -521,7 +553,8 @@ class DreamBoothSubset(BaseSubset):
             use_style_template,
             color_aug,
             flip_aug,
-            rotate_aug,         
+            rotate_aug,   
+            keras_aug,            
             face_crop_aug_range,
             random_crop,
             mask_simple_background,
@@ -561,6 +594,7 @@ class FineTuningSubset(BaseSubset):
         color_aug,
         flip_aug,
         rotate_aug,   
+        keras_aug,        
         face_crop_aug_range,
         random_crop,
         mask_simple_background: bool,
@@ -585,7 +619,8 @@ class FineTuningSubset(BaseSubset):
             use_style_template,
             color_aug,
             flip_aug,
-            rotate_aug,          
+            rotate_aug,   
+            keras_aug,            
             face_crop_aug_range,
             random_crop,
             mask_simple_background,
@@ -622,6 +657,7 @@ class ControlNetSubset(BaseSubset):
         color_aug,
         flip_aug,
         rotate_aug,   
+        keras_aug,        
         face_crop_aug_range,
         random_crop,
         mask_simple_background: bool,
@@ -646,7 +682,8 @@ class ControlNetSubset(BaseSubset):
             use_style_template,
             color_aug,
             flip_aug,
-            rotate_aug,           
+            rotate_aug,   
+            keras_aug,            
             face_crop_aug_range,
             random_crop,
             mask_simple_background,
@@ -1308,7 +1345,7 @@ class BaseDataset(torch.utils.data.Dataset):
                         image[simple_color_mask, -1] = 0
                 
                 # augmentation
-                aug = self.aug_helper.get_augmentor(subset.color_aug, subset.rotate_aug)
+                aug = self.aug_helper.get_augmentor(subset.color_aug, subset.rotate_aug, subset.keras_aug)
                 img = aug(image=img)["image"]
 
                 if flipped:
@@ -1921,7 +1958,8 @@ class ControlNetDataset(BaseDataset):
                 subset.use_style_template,
                 subset.color_aug,
                 subset.flip_aug,
-                subset.rotate_aug,                
+                subset.rotate_aug,   
+                subset.keras_aug,                
                 subset.face_crop_aug_range,
                 subset.random_crop,
                 subset.caption_dropout_rate,
@@ -3528,6 +3566,13 @@ def add_dataset_arguments(
     parser.add_argument("--color_aug", action="store_true", help="enable weak color augmentation / 学習時に色合いのaugmentationを有効にする")
     parser.add_argument("--flip_aug", action="store_true", help="enable horizontal flip augmentation / 学習時に左右反転のaugmentationを有効にする")
     parser.add_argument("--rotate_aug", action="store_true", help="enable rotation augmentation. / 学習時に画像の回転のaugmentationを有効にする")
+    parser.add_argument(
+        "--keras_aug",
+        type=str,
+        default=None,
+        nargs="*",
+        help='specify Keras image augmentation parameters (e.g., "zoom_range=0.2"). / Kerasでの画像augmentationのパラメータを指定します（例："zoom_range=0.2"）。'),
+    )
     parser.add_argument(
         "--face_crop_aug_range",
         type=str,

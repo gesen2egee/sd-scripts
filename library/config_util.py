@@ -62,6 +62,7 @@ class BaseSubsetParams:
     color_aug: bool = False
     flip_aug: bool = False
     rotate_aug: bool = False
+    keras_aug: Optional[str] = None       
     face_crop_aug_range: Optional[Tuple[float, float]] = None
     random_crop: bool = False
     mask_simple_background: bool = False
@@ -178,6 +179,7 @@ class ConfigSanitizer:
         "face_crop_aug_range": functools.partial(__validate_and_convert_twodim.__func__, float),
         "flip_aug": bool,
         "rotate_aug": bool,
+        "keras_aug": Optional[str],
         "num_repeats": int,
         "random_crop": bool,
         "mask_simple_background": bool,
@@ -518,7 +520,8 @@ def generate_dataset_group_by_blueprint(dataset_group_blueprint: DatasetGroupBlu
           caption_suffix: {subset.caption_suffix}
           color_aug: {subset.color_aug}
           flip_aug: {subset.flip_aug}
-          rotate_aug: {subset.rotate_aug}  
+          rotate_aug: {subset.rotate_aug}   
+          keras_aug: {subset.keras_aug}
           face_crop_aug_range: {subset.face_crop_aug_range}
           random_crop: {subset.random_crop}
           mask_simple_background: {subset.mask_simple_background}          
