@@ -341,36 +341,48 @@ class AugHelper:
         return {"image": image}
         
     def rotate_aug(self, image: np.ndarray):
-        angle = np.random.normal(0, 30)
-        rgb = image[..., :3]
-        
-        if image.shape[2] == 4:
-            a = image[..., 3]
+    
+        if random.random() <= 0.5:    
+            angle = np.random.normal(0, 15)
+            rgb = image[..., :3]
             
-        height, width = rgb.shape[:2]
-        center = (width / 2, height / 2)
-        rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
-        rotated_image = cv2.warpAffine(rgb, rotation_matrix, (width, height), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,0,0))
+            if image.shape[2] == 4:
+                a = image[..., 3]
+                
+            height, width = rgb.shape[:2]
+            center = (width / 2, height / 2)
+            rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+            image = cv2.warpAffine(rgb, rotation_matrix, (width, height), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,0,0))
 
-        if image.shape[2] == 4:
-            rotated_a = cv2.warpAffine(a, rotation_matrix, (width, height), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,))
-            rotated_image = np.dstack([rotated_image, rotated_a])
-
-        return {"image": rotated_image} 
+            if image.shape[2] == 4:
+                rotated_a = cv2.warpAffine(a, rotation_matrix, (width, height), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,))
+                image = np.dstack([rotated_image, rotated_a])
+                
+        return {"image": image} 
 
     def keras_aug(self, image: np.ndarray, keras_aug):
+
+        original_image_prob = 0
         keras_augs_kwargs = {}
-        if keras_aug is not None and len(keras_augs) > 0:
-            for arg in keras_aug:
-                key, value = arg.split("=")
-                value = ast.literal_eval(value)
+        
+        for arg in keras_aug:
+            key, value = arg.split("=")
+            if key == "original_image":
+                original_image_prob = float(value)
+            else:
+                value = ast.literal_eval(value) 
                 keras_augs_kwargs[key] = value
+                
+        if random.random() <= original_image_prob:
+            return {"image": image}
 
         datagen = ImageDataGenerator(**keras_augs_kwargs)
         image = image.reshape((1,) + image.shape)
         for batch in datagen.flow(image, batch_size=1):
-            enhanced_image = batch[0]
-            return {"image": enhanced_image}
+            image = batch[0]
+            break  
+        
+        return {"image": image}
 
     def get_augmentor(self, color_aug=False, rotate_aug=False, keras_augs=None):
         def aug(image):
