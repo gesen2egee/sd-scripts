@@ -30,4 +30,5 @@ huggingface-hub==0.20.1
 # open clip for SDXL
 open-clip-torch==2.20.0
 # for kohya_ss library
+keras
 -e .
