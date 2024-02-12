@@ -179,7 +179,7 @@ class ConfigSanitizer:
         "face_crop_aug_range": functools.partial(__validate_and_convert_twodim.__func__, float),
         "flip_aug": bool,
         "rotate_aug": bool,
-        "keras_aug": Optional[str],
+        "keras_aug": Any(None, All([str])),
         "num_repeats": int,
         "random_crop": bool,
         "mask_simple_background": bool,

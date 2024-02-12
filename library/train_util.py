@@ -3571,7 +3571,7 @@ def add_dataset_arguments(
         type=str,
         default=None,
         nargs="*",
-        help='specify Keras image augmentation parameters (e.g., "zoom_range=0.2"). / Kerasでの画像augmentationのパラメータを指定します（例："zoom_range=0.2"）。'),
+        help='specify Keras image augmentation parameters (e.g., "zoom_range=0.2"). / Kerasでの画像augmentationのパラメータを指定します（例："zoom_range=0.2"）。',
     )
     parser.add_argument(
         "--face_crop_aug_range",
