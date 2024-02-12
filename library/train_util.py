@@ -398,10 +398,33 @@ class AugHelper:
                 image = np.clip(image**gamma, 0, 255).astype(np.uint8)
 
         return {"image": image}
+        
+    def rotate_aug(self, image: np.ndarray):
+        angle = np.random.normal(0, 30)
+        rgb = image[..., :3]
+        
+        if image.shape[2] == 4:
+            a = image[..., 3]
+            
+        height, width = rgb.shape[:2]
+        center = (width / 2, height / 2)
+        rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+        rotated_image = cv2.warpAffine(rgb, rotation_matrix, (width, height), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,0,0))
 
-    def get_augmentor(self, use_color_aug: bool):  # -> Optional[Callable[[np.ndarray], Dict[str, np.ndarray]]]:
-        return self.color_aug if use_color_aug else None
+        if image.shape[2] == 4:
+            rotated_a = cv2.warpAffine(a, rotation_matrix, (width, height), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,))
+            rotated_image = np.dstack([rotated_image, rotated_a])
 
+        return {"image": rotated_image} 
+
+    def get_augmentor(self, color_aug=False, rotate_aug=False):
+        def aug(image):
+            if color_aug:
+                image = self.color_aug(image)["image"]
+            if rotate_aug:
+                image = self.rotate_aug(image)["image"]
+            return {"image": image}
+        return aug
 
 class BaseSubset:
     def __init__(
@@ -416,6 +439,7 @@ class BaseSubset:
         use_style_template: bool, 
         color_aug: bool,
         flip_aug: bool,
+        rotate_aug: bool,
         face_crop_aug_range: Optional[Tuple[float, float]],
         random_crop: bool,
         caption_dropout_rate: float,
@@ -436,6 +460,7 @@ class BaseSubset:
         self.use_style_template = use_style_template 
         self.color_aug = color_aug
         self.flip_aug = flip_aug
+        self.rotate_aug = rotate_aug 
         self.face_crop_aug_range = face_crop_aug_range
         self.random_crop = random_crop
         self.caption_dropout_rate = caption_dropout_rate
@@ -466,6 +491,7 @@ class DreamBoothSubset(BaseSubset):
         use_style_template,
         color_aug,
         flip_aug,
+        rotate_aug,
         face_crop_aug_range,
         random_crop,
         caption_dropout_rate,
@@ -489,6 +515,7 @@ class DreamBoothSubset(BaseSubset):
             use_style_template,
             color_aug,
             flip_aug,
+            rotate_aug,         
             face_crop_aug_range,
             random_crop,
             caption_dropout_rate,
@@ -526,6 +553,7 @@ class FineTuningSubset(BaseSubset):
         use_style_template,
         color_aug,
         flip_aug,
+        rotate_aug,   
         face_crop_aug_range,
         random_crop,
         caption_dropout_rate,
@@ -549,6 +577,7 @@ class FineTuningSubset(BaseSubset):
             use_style_template,
             color_aug,
             flip_aug,
+            rotate_aug,          
             face_crop_aug_range,
             random_crop,
             caption_dropout_rate,
@@ -583,6 +612,7 @@ class ControlNetSubset(BaseSubset):
         use_style_template,
         color_aug,
         flip_aug,
+        rotate_aug,   
         face_crop_aug_range,
         random_crop,
         caption_dropout_rate,
@@ -606,6 +636,7 @@ class ControlNetSubset(BaseSubset):
             use_style_template,
             color_aug,
             flip_aug,
+            rotate_aug,           
             face_crop_aug_range,
             random_crop,
             caption_dropout_rate,
@@ -1251,9 +1282,8 @@ class BaseDataset(torch.utils.data.Dataset):
                     crop_ltrb = (0, 0, 0, 0)
 
                 # augmentation
-                aug = self.aug_helper.get_augmentor(subset.color_aug)
-                if aug is not None:
-                    img = aug(image=img)["image"]
+                aug = self.aug_helper.get_augmentor(subset.color_aug, subset.rotate_aug)
+                img = aug(image=img)["image"]
 
                 if flipped:
                     img = img[:, ::-1, :].copy()  # copy to avoid negative stride problem
@@ -1865,6 +1895,7 @@ class ControlNetDataset(BaseDataset):
                 subset.use_style_template,
                 subset.color_aug,
                 subset.flip_aug,
+                subset.rotate_aug,                
                 subset.face_crop_aug_range,
                 subset.random_crop,
                 subset.caption_dropout_rate,
@@ -3451,6 +3482,7 @@ def add_dataset_arguments(
     )
     parser.add_argument("--color_aug", action="store_true", help="enable weak color augmentation / 学習時に色合いのaugmentationを有効にする")
     parser.add_argument("--flip_aug", action="store_true", help="enable horizontal flip augmentation / 学習時に左右反転のaugmentationを有効にする")
+    parser.add_argument("--rotate_aug", action="store_true", help="enable rotation augmentation. / 学習時に画像の回転のaugmentationを有効にする")
     parser.add_argument(
         "--face_crop_aug_range",
         type=str,
