@@ -415,10 +415,10 @@ class AugHelper:
             height, width = rgb.shape[:2]
             center = (width / 2, height / 2)
             rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
-            image = cv2.warpAffine(rgb, rotation_matrix, (width, height), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,0,0))
+            image = cv2.warpAffine(rgb, rotation_matrix, (width, height), borderMode=cv2.BORDER_REPLICATE)
 
             if image.shape[2] == 4:
-                rotated_a = cv2.warpAffine(a, rotation_matrix, (width, height), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,))
+                rotated_a = cv2.warpAffine(a, rotation_matrix, (width, height), borderMode=cv2.BORDER_REPLICATE)
                 image = np.dstack([rotated_image, rotated_a])
                 
         return {"image": image} 
@@ -427,7 +427,7 @@ class AugHelper:
 
         original_image_prob = 0
         keras_augs_kwargs = {}
-        
+        image=image[..., :3]
         for arg in keras_aug:
             key, value = arg.split("=")
             if key == "original_image":
@@ -447,7 +447,7 @@ class AugHelper:
         
         return {"image": image}
 
-    def get_augmentor(self, color_aug=False, rotate_aug=False, keras_augs=None):
+    def get_augmentor(self, color_aug=False, rotate_aug=False, keras_aug=None):
         def aug(image):
             if color_aug:
                 image = self.color_aug(image)["image"]
