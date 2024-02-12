@@ -59,8 +59,7 @@ class BaseSubsetParams:
     keep_tokens_separator: str = (None,)
     color_aug: bool = False
     flip_aug: bool = False
-    rotate_aug: bool,
-    keras_aug: Optional[str],       
+    rotate_aug: bool = False
     face_crop_aug_range: Optional[Tuple[float, float]] = None
     random_crop: bool = False
     caption_prefix: Optional[str] = None
@@ -176,7 +175,6 @@ class ConfigSanitizer:
         "face_crop_aug_range": functools.partial(__validate_and_convert_twodim.__func__, float),
         "flip_aug": bool,
         "rotate_aug": bool,
-        "keras_aug": Optional[str],
         "num_repeats": int,
         "random_crop": bool,
         "shuffle_caption": bool,
@@ -512,8 +510,7 @@ def generate_dataset_group_by_blueprint(dataset_group_blueprint: DatasetGroupBlu
           caption_suffix: {subset.caption_suffix}
           color_aug: {subset.color_aug}
           flip_aug: {subset.flip_aug}
-          rotate_aug: {subset.rotate_aug}   
-          keras_aug: {subset.keras_aug}
+          rotate_aug: {subset.rotate_aug}  
           face_crop_aug_range: {subset.face_crop_aug_range}
           random_crop: {subset.random_crop}
           token_warmup_min: {subset.token_warmup_min},
