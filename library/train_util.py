@@ -382,21 +382,24 @@ class AugHelper:
         # )
         hue_shift_limit = 8
 
+        rgb_channels = image[:, :, :3] 
+        alpha_channel = image[:, :, -1]
         # remove dependency to albumentations
         if random.random() <= 0.33:
             if random.random() > 0.5:
                 # hue shift
-                hsv_img = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+                hsv_img = cv2.cvtColor(rgb_channels, cv2.COLOR_BGR2HSV)
                 hue_shift = random.uniform(-hue_shift_limit, hue_shift_limit)
                 if hue_shift < 0:
                     hue_shift = 180 + hue_shift
                 hsv_img[:, :, 0] = (hsv_img[:, :, 0] + hue_shift) % 180
-                image = cv2.cvtColor(hsv_img, cv2.COLOR_HSV2BGR)
+                rgb_channels = cv2.cvtColor(hsv_img, cv2.COLOR_HSV2BGR)
             else:
                 # random gamma
                 gamma = random.uniform(0.95, 1.05)
-                image = np.clip(image**gamma, 0, 255).astype(np.uint8)
+                rgb_channels = np.clip(rgb_channels**gamma, 0, 255).astype(np.uint8)
 
+        image = np.dstack((rgb_channels, alpha_channel)) 
         return {"image": image}
         
     def rotate_aug(self, image: np.ndarray):
@@ -442,6 +445,7 @@ class BaseSubset:
         rotate_aug: bool,
         face_crop_aug_range: Optional[Tuple[float, float]],
         random_crop: bool,
+        mask_simple_background: bool,
         caption_dropout_rate: float,
         caption_dropout_every_n_epochs: int,
         caption_tag_dropout_rate: float,
@@ -463,6 +467,7 @@ class BaseSubset:
         self.rotate_aug = rotate_aug 
         self.face_crop_aug_range = face_crop_aug_range
         self.random_crop = random_crop
+        self.mask_simple_background = mask_simple_background
         self.caption_dropout_rate = caption_dropout_rate
         self.caption_dropout_every_n_epochs = caption_dropout_every_n_epochs
         self.caption_tag_dropout_rate = caption_tag_dropout_rate
@@ -494,6 +499,7 @@ class DreamBoothSubset(BaseSubset):
         rotate_aug,
         face_crop_aug_range,
         random_crop,
+        mask_simple_background: bool,
         caption_dropout_rate,
         caption_dropout_every_n_epochs,
         caption_tag_dropout_rate,
@@ -518,6 +524,7 @@ class DreamBoothSubset(BaseSubset):
             rotate_aug,         
             face_crop_aug_range,
             random_crop,
+            mask_simple_background,
             caption_dropout_rate,
             caption_dropout_every_n_epochs,
             caption_tag_dropout_rate,
@@ -556,6 +563,7 @@ class FineTuningSubset(BaseSubset):
         rotate_aug,   
         face_crop_aug_range,
         random_crop,
+        mask_simple_background: bool,
         caption_dropout_rate,
         caption_dropout_every_n_epochs,
         caption_tag_dropout_rate,
@@ -580,6 +588,7 @@ class FineTuningSubset(BaseSubset):
             rotate_aug,          
             face_crop_aug_range,
             random_crop,
+            mask_simple_background,
             caption_dropout_rate,
             caption_dropout_every_n_epochs,
             caption_tag_dropout_rate,
@@ -615,6 +624,7 @@ class ControlNetSubset(BaseSubset):
         rotate_aug,   
         face_crop_aug_range,
         random_crop,
+        mask_simple_background: bool,
         caption_dropout_rate,
         caption_dropout_every_n_epochs,
         caption_tag_dropout_rate,
@@ -639,6 +649,7 @@ class ControlNetSubset(BaseSubset):
             rotate_aug,           
             face_crop_aug_range,
             random_crop,
+            mask_simple_background,
             caption_dropout_rate,
             caption_dropout_every_n_epochs,
             caption_tag_dropout_rate,
@@ -1058,7 +1069,7 @@ class BaseDataset(torch.utils.data.Dataset):
         # iterate batches: batch doesn't have image, image will be loaded in cache_batch_latents and discarded
         print("caching latents...")
         for batch in tqdm(batches, smoothing=1, total=len(batches)):
-            cache_batch_latents(vae, cache_to_disk, batch, subset.flip_aug, subset.random_crop)
+            cache_batch_latents(vae, cache_to_disk, batch, subset.flip_aug, subset.random_crop, subset.mask_simple_background)
 
     # weight_dtypeを指定するとText Encoderそのもの、およひ出力がweight_dtypeになる
     # SDXLでのみ有効だが、datasetのメソッドとする必要があるので、sdxl_train_util.pyではなくこちらに実装する
@@ -1241,8 +1252,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
                 image = None
             elif image_info.latents_npz is not None:  # FineTuningDatasetまたはcache_latents_to_disk=Trueの場合
-                latents, original_size, crop_ltrb, flipped_latents = load_latents_from_disk(image_info.latents_npz)
-                mask = load_mask(image_info.absolute_path, image_info.resized_size) / 255
+                latents, original_size, crop_ltrb, flipped_latents, mask = load_latents_from_disk(image_info.latents_npz)
                 if flipped:
                     latents = flipped_latents
                     mask = np.flip(mask, axis=1)
@@ -1280,7 +1290,23 @@ class BaseDataset(torch.utils.data.Dataset):
 
                     original_size = [im_w, im_h]
                     crop_ltrb = (0, 0, 0, 0)
-
+                    
+                if mask_simple_background:
+                    edge_width = max(1, min(image.shape[0], image.shape[1]) // 20)
+                    top_edge = image[:edge_width, :, :]
+                    bottom_edge = image[-edge_width:, :, :]
+                    left_edge = image[:, :edge_width, :].reshape(-1, image.shape[2])
+                    right_edge = image[:, -edge_width:, :].reshape(-1, image.shape[2])
+                    edges = np.concatenate([top_edge.reshape(-1, image.shape[2]), 
+                                            bottom_edge.reshape(-1, image.shape[2]),
+                                            left_edge, right_edge])
+                    colors, counts = np.unique(edges, axis=0, return_counts=True)
+                    simple_color = colors[counts.argmax()]
+                    simple_color_ratio = counts.max() / counts.sum()
+                    if simple_color_ratio > 0.3:
+                        simple_color_mask = np.all(image[:, :, :-1] == simple_color[:3], axis=2)
+                        image[simple_color_mask, -1] = 0
+                
                 # augmentation
                 aug = self.aug_helper.get_augmentor(subset.color_aug, subset.rotate_aug)
                 img = aug(image=img)["image"]
@@ -2128,7 +2154,7 @@ def is_disk_cached_latents_is_expected(reso, npz_path: str, flip_aug: bool):
 # 戻り値は、latents_tensor, (original_size width, original_size height), (crop left, crop top)
 def load_latents_from_disk(
     npz_path,
-) -> Tuple[Optional[torch.Tensor], Optional[List[int]], Optional[List[int]], Optional[torch.Tensor]]:
+) -> Tuple[Optional[torch.Tensor], Optional[List[int]], Optional[List[int]], Optional[torch.Tensor], Optional[np.ndarray]]:
     npz = np.load(npz_path)
     if "latents" not in npz:
         raise ValueError(f"error: npz is old format. please re-generate {npz_path}")
@@ -2137,14 +2163,19 @@ def load_latents_from_disk(
     original_size = npz["original_size"].tolist()
     crop_ltrb = npz["crop_ltrb"].tolist()
     flipped_latents = npz["latents_flipped"] if "latents_flipped" in npz else None
-    return latents, original_size, crop_ltrb, flipped_latents
+    mask = npz["mask"] if "mask" in npz else None
+    if mask is not None:
+        mask = mask.astype(np.float32)    
+    return latents, original_size, crop_ltrb, flipped_latents, mask
 
 
-def save_latents_to_disk(npz_path, latents_tensor, original_size, crop_ltrb, flipped_latents_tensor=None):
+def save_latents_to_disk(npz_path, latents_tensor, original_size, crop_ltrb, flipped_latents_tensor=None, mask=None):
     kwargs = {}
     if flipped_latents_tensor is not None:
         kwargs["latents_flipped"] = flipped_latents_tensor.float().cpu().numpy()
-    np.savez(
+    if mask is not None:
+        kwargs["mask"] = np.array(mask, dtype=np.uint8)       
+    np.savez_compressed(
         npz_path,
         latents=latents_tensor.float().cpu().numpy(),
         original_size=np.array(original_size),
@@ -2340,7 +2371,7 @@ def load_arbitrary_dataset(args, tokenizer) -> MinimalDataset:
 def load_image(image_path):
     image = Image.open(image_path)
     if not image.mode == "RGBA":
-        image = image.convert("RGBA")
+        image = image.convert("RGBA")    
     img = np.array(image, np.uint8)
     img[..., -1] = load_mask(image_path, img.shape[:2])
     return img
@@ -2376,7 +2407,6 @@ def load_mask(image_path, target_shape):
 
     return result
 
-
 # 画像を読み込む。戻り値はnumpy.ndarray,(original width, original height),(crop left, crop top, crop right, crop bottom)
 def trim_and_resize_if_required(
     random_crop: bool, image: Image.Image, reso, resized_size: Tuple[int, int]
@@ -2411,7 +2441,7 @@ def trim_and_resize_if_required(
 
 
 def cache_batch_latents(
-    vae: AutoencoderKL, cache_to_disk: bool, image_infos: List[ImageInfo], flip_aug: bool, random_crop: bool
+    vae: AutoencoderKL, cache_to_disk: bool, image_infos: List[ImageInfo], flip_aug: bool, random_crop: bool, mask_simple_background: bool
 ) -> None:
     r"""
     requires image_infos to have: absolute_path, bucket_reso, resized_size, latents_npz
@@ -2429,6 +2459,21 @@ def cache_batch_latents(
         # TODO 画像のメタデータが壊れていて、メタデータから割り当てたbucketと実際の画像サイズが一致しない場合があるのでチェック追加要
         image, original_size, crop_ltrb = trim_and_resize_if_required(random_crop, image, info.bucket_reso, info.resized_size)
         # alpha channel contains loss mask, separate it
+        if mask_simple_background:
+            edge_width = max(1, min(image.shape[0], image.shape[1]) // 20)
+            top_edge = image[:edge_width, :, :]
+            bottom_edge = image[-edge_width:, :, :]
+            left_edge = image[:, :edge_width, :].reshape(-1, image.shape[2])
+            right_edge = image[:, -edge_width:, :].reshape(-1, image.shape[2])
+            edges = np.concatenate([top_edge.reshape(-1, image.shape[2]), 
+                                    bottom_edge.reshape(-1, image.shape[2]),
+                                    left_edge, right_edge])
+            colors, counts = np.unique(edges, axis=0, return_counts=True)
+            simple_color = colors[counts.argmax()]
+            simple_color_ratio = counts.max() / counts.sum()
+            if simple_color_ratio > 0.3:
+                simple_color_mask = np.all(image[:, :, :-1] == simple_color[:3], axis=2)
+                image[simple_color_mask, -1] = 0
         mask = image[:, :, -1] / 255
         image = image[:, :, :3]
         image = IMAGE_TRANSFORMS(image)
@@ -2457,7 +2502,7 @@ def cache_batch_latents(
             raise RuntimeError(f"NaN detected in latents: {info.absolute_path}")
 
         if cache_to_disk:
-            save_latents_to_disk(info.latents_npz, latent, info.latents_original_size, info.latents_crop_ltrb, flipped_latent)
+            save_latents_to_disk(info.latents_npz, latent, info.latents_original_size, info.latents_crop_ltrb, flipped_latent, mask)
         else:
             info.latents = latent
             info.mask = mask
@@ -3531,6 +3576,10 @@ def add_dataset_arguments(
 
     parser.add_argument(
         "--masked_loss", action="store_true", help="Enable masking of latent loss using grayscale mask images"
+    )
+
+    parser.add_argument(
+        "--mask_simple_background", action="store_true", help="Enable auto-masking of latent loss based on the dominant edge color if it occupies more than 30% of the image edges. This helps in focusing the model on the main content by ignoring simple or uniform background colors such as solid white or black. / 画像の端に占める主要な色が30%以上の場合に基づいて潜在的な損失の自動マスキングを有効にします。これにより、純白または純黒などの単純または均一な背景色を無視して、モデルがメインコンテンツに焦点を合わせるのに役立ちます。"
     )
 
     parser.add_argument(
