@@ -59,8 +59,8 @@ class BaseSubsetParams:
     keep_tokens_separator: str = (None,)
     color_aug: bool = False
     flip_aug: bool = False
-    rotate_aug: bool,
-    keras_aug: Optional[str],       
+    rotate_aug: bool = False
+    keras_aug: Optional[str] = None       
     face_crop_aug_range: Optional[Tuple[float, float]] = None
     random_crop: bool = False
     caption_prefix: Optional[str] = None
