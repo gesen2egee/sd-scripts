@@ -22,9 +22,11 @@ import toml
 import voluptuous
 from voluptuous import (
     Any,
+    All,
     ExactSequence,
     MultipleInvalid,
     Object,
+    Length,
     Required,
     Schema,
 )
@@ -60,7 +62,7 @@ class BaseSubsetParams:
     color_aug: bool = False
     flip_aug: bool = False
     rotate_aug: bool = False
-    keras_aug: Optional[str] = None       
+    keras_aug: Optional[List[str]] = None    
     face_crop_aug_range: Optional[Tuple[float, float]] = None
     random_crop: bool = False
     caption_prefix: Optional[str] = None
@@ -176,7 +178,7 @@ class ConfigSanitizer:
         "face_crop_aug_range": functools.partial(__validate_and_convert_twodim.__func__, float),
         "flip_aug": bool,
         "rotate_aug": bool,
-        "keras_aug": Optional[str],
+        "keras_aug": Any(None, All([str], Length(min=1))),
         "num_repeats": int,
         "random_crop": bool,
         "shuffle_caption": bool,

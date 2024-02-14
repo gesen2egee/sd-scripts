@@ -339,32 +339,34 @@ class AugHelper:
                 image = np.clip(image**gamma, 0, 255).astype(np.uint8)
 
         return {"image": image}
-        
+
     def rotate_aug(self, image: np.ndarray):
     
-        if random.random() <= 0.5:    
-            angle = np.random.normal(0, 15)
-            rgb = image[..., :3]
-            
-            if image.shape[2] == 4:
-                a = image[..., 3]
-                
-            height, width = rgb.shape[:2]
-            center = (width / 2, height / 2)
-            rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
-            image = cv2.warpAffine(rgb, rotation_matrix, (width, height), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,0,0))
+        angle = np.random.uniform(-30, 30)
+        rgb = image[..., :3]
 
-            if image.shape[2] == 4:
-                rotated_a = cv2.warpAffine(a, rotation_matrix, (width, height), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,))
-                image = np.dstack([rotated_image, rotated_a])
-                
+        height, width = rgb.shape[:2]
+        center = (width / 2, height / 2)
+        shift_w = width * 0.05 * random.uniform(-1, 1)
+        shift_h = height * 0.05 * random.uniform(-1, 1)
+        center = (center[0] + shift_w, center[1] + shift_h)
+        rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+        rgb = cv2.warpAffine(rgb, rotation_matrix, (width, height), borderMode=cv2.BORDER_REPLICATE)
+
+        if image.shape[2] == 4:
+            a = image[..., 3]        
+            rotated_a = cv2.warpAffine(a, rotation_matrix, (width, height), borderMode=cv2.BORDER_REPLICATE)
+            image = np.dstack([rgb, rotated_a])
+        else:
+            image = rgb
+            
         return {"image": image} 
 
     def keras_aug(self, image: np.ndarray, keras_aug):
 
         original_image_prob = 0
         keras_augs_kwargs = {}
-        
+        image = image.astype(np.uint8)
         for arg in keras_aug:
             key, value = arg.split("=")
             if key == "original_image":
@@ -384,7 +386,7 @@ class AugHelper:
         
         return {"image": image}
 
-    def get_augmentor(self, color_aug=False, rotate_aug=False, keras_augs=None):
+    def get_augmentor(self, color_aug=False, rotate_aug=False, keras_aug=None):
         def aug(image):
             if color_aug:
                 image = self.color_aug(image)["image"]
@@ -3288,7 +3290,7 @@ def add_dataset_arguments(
         type=str,
         default=None,
         nargs="*",
-        help='specify Keras image augmentation parameters (e.g., "zoom_range=0.2"). / Kerasでの画像augmentationのパラメータを指定します（例："zoom_range=0.2"）。'),
+        help='specify Keras image augmentation parameters (e.g., "zoom_range=0.2"). / Kerasでの画像augmentationのパラメータを指定します（例："zoom_range=0.2"）。',
     )
     parser.add_argument(
         "--face_crop_aug_range",
