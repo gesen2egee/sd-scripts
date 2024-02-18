@@ -1,7 +1,6 @@
 # DreamBooth training
 # XXX dropped option: fine_tune
 
-import gc
 import argparse
 import itertools
 import math
@@ -10,10 +9,9 @@ from multiprocessing import Value
 import toml
 
 from tqdm import tqdm
+
 import torch
-
-from library.ipex_interop import init_ipex
-
+from library.device_utils import init_ipex, clean_memory_on_device
 init_ipex()
 
 from accelerate.utils import set_seed
@@ -37,6 +35,13 @@ from library.custom_train_functions import (
     apply_debiased_estimation,
     get_latent_masks
 )
+from library.utils import setup_logging, add_logging_arguments
+
+setup_logging()
+import logging
+
+logger = logging.getLogger(__name__)
+
 # perlin_noise,
 from library.train_util import (
     EMA,
@@ -47,6 +52,7 @@ from library.train_util import (
 def train(args):
     train_util.verify_training_args(args)
     train_util.prepare_dataset_args(args, False)
+    setup_logging(args, reset=True)
 
     cache_latents = args.cache_latents
 
@@ -59,11 +65,11 @@ def train(args):
     if args.dataset_class is None:
         blueprint_generator = BlueprintGenerator(ConfigSanitizer(True, False, False, True))
         if args.dataset_config is not None:
-            print(f"Load dataset config from {args.dataset_config}")
+            logger.info(f"Load dataset config from {args.dataset_config}")
             user_config = config_util.load_user_config(args.dataset_config)
             ignored = ["train_data_dir", "reg_data_dir"]
             if any(getattr(args, attr) is not None for attr in ignored):
-                print(
+                logger.warning(
                     "ignore following options because config file is found: {0} / 設定ファイルが利用されるため以下のオプションは無視されます: {0}".format(
                         ", ".join(ignored)
                     )
@@ -98,13 +104,13 @@ def train(args):
         ), "when caching latents, either color_aug or random_crop cannot be used / latentをキャッシュするときはcolor_augとrandom_cropは使えません"
 
     # acceleratorを準備する
-    print("prepare accelerator")
+    logger.info("prepare accelerator")
 
     if args.gradient_accumulation_steps > 1:
-        print(
+        logger.warning(
             f"gradient_accumulation_steps is {args.gradient_accumulation_steps}. accelerate does not support gradient_accumulation_steps when training multiple models (U-Net and Text Encoder), so something might be wrong"
         )
-        print(
+        logger.warning(
             f"gradient_accumulation_stepsが{args.gradient_accumulation_steps}に設定されています。accelerateは複数モデル（U-NetおよびText Encoder）の学習時にgradient_accumulation_stepsをサポートしていないため結果は未知数です"
         )
 
@@ -143,9 +149,7 @@ def train(args):
         with torch.no_grad():
             train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
         vae.to("cpu")
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        gc.collect()
+        clean_memory_on_device(accelerator.device)
 
         accelerator.wait_for_everyone()
 
@@ -198,7 +202,9 @@ def train(args):
         args.max_train_steps = args.max_train_epochs * math.ceil(
             len(train_dataloader) / accelerator.num_processes / args.gradient_accumulation_steps
         )
-        accelerator.print(f"override steps. steps for {args.max_train_epochs} epochs is / 指定エポックまでのステップ数: {args.max_train_steps}")
+        accelerator.print(
+            f"override steps. steps for {args.max_train_epochs} epochs is / 指定エポックまでのステップ数: {args.max_train_steps}"
+        )
 
     # データセット側にも学習ステップを送信
     train_dataset_group.set_max_train_steps(args.max_train_steps)
@@ -273,7 +279,7 @@ def train(args):
     if accelerator.is_main_process:
         init_kwargs = {}
         if args.wandb_run_name:
-            init_kwargs['wandb'] = {'name': args.wandb_run_name}
+            init_kwargs["wandb"] = {"name": args.wandb_run_name}
         if args.log_tracker_config is not None:
             init_kwargs = toml.load(args.log_tracker_config)
         accelerator.init_trackers("dreambooth" if args.log_tracker_name is None else args.log_tracker_name, init_kwargs=init_kwargs)
@@ -474,12 +480,13 @@ def train(args):
         train_util.save_sd_model_on_train_end(
             args, src_path, save_stable_diffusion_format, use_safetensors, save_dtype, epoch, global_step, text_encoder, unet, vae
         )
-        print("model saved.")
+        logger.info("model saved.")
 
 
 def setup_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
 
+    add_logging_arguments(parser)
     train_util.add_sd_models_arguments(parser)
     train_util.add_dataset_arguments(parser, True, False, True)
     train_util.add_training_arguments(parser, True)
