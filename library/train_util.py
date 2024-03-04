@@ -71,6 +71,7 @@ import library.model_util as model_util
 import library.huggingface_util as huggingface_util
 import library.sai_model_spec as sai_model_spec
 from keras.preprocessing.image import ImageDataGenerator
+from library import token_merging
 from library.utils import setup_logging
 
 setup_logging()
@@ -485,6 +486,8 @@ class BaseSubset:
         keep_tokens_separator: str,
         use_object_template: bool,
         use_style_template: bool, 
+        secondary_separator: Optional[str],
+        enable_wildcard: bool,
         color_aug: bool,
         flip_aug: bool,
         rotate_aug: bool,
@@ -508,6 +511,8 @@ class BaseSubset:
         self.keep_tokens_separator = keep_tokens_separator
         self.use_object_template = use_object_template
         self.use_style_template = use_style_template 
+        self.secondary_separator = secondary_separator
+        self.enable_wildcard = enable_wildcard
         self.color_aug = color_aug
         self.flip_aug = flip_aug
         self.rotate_aug = rotate_aug
@@ -541,6 +546,8 @@ class DreamBoothSubset(BaseSubset):
         keep_tokens_separator,
         use_object_template,
         use_style_template,
+        secondary_separator,
+        enable_wildcard,
         color_aug,
         flip_aug,
         rotate_aug,   
@@ -567,6 +574,8 @@ class DreamBoothSubset(BaseSubset):
             keep_tokens_separator,
             use_object_template,
             use_style_template,
+            secondary_separator,
+            enable_wildcard,
             color_aug,
             flip_aug,
             rotate_aug,   
@@ -607,6 +616,8 @@ class FineTuningSubset(BaseSubset):
         keep_tokens_separator,
         use_object_template,
         use_style_template,
+        secondary_separator,
+        enable_wildcard,
         color_aug,
         flip_aug,
         rotate_aug,   
@@ -633,6 +644,8 @@ class FineTuningSubset(BaseSubset):
             keep_tokens_separator,
             use_object_template,
             use_style_template,
+            secondary_separator,
+            enable_wildcard,
             color_aug,
             flip_aug,
             rotate_aug,   
@@ -670,6 +683,8 @@ class ControlNetSubset(BaseSubset):
         keep_tokens_separator,
         use_object_template,
         use_style_template,
+        secondary_separator,
+        enable_wildcard,
         color_aug,
         flip_aug,
         rotate_aug,   
@@ -696,6 +711,8 @@ class ControlNetSubset(BaseSubset):
             keep_tokens_separator,
             use_object_template,
             use_style_template,
+            secondary_separator,
+            enable_wildcard,
             color_aug,
             flip_aug,
             rotate_aug,   
@@ -833,15 +850,41 @@ class BaseDataset(torch.utils.data.Dataset):
         if is_drop_out:
             caption = ""
         else:
+            # process wildcards
+            if subset.enable_wildcard:
+                # wildcard is like '{aaa|bbb|ccc...}'
+                # escape the curly braces like {{ or }}
+                replacer1 = "⦅"
+                replacer2 = "⦆"
+                while replacer1 in caption or replacer2 in caption:
+                    replacer1 += "⦅"
+                    replacer2 += "⦆"
+
+                caption = caption.replace("{{", replacer1).replace("}}", replacer2)
+
+                # replace the wildcard
+                def replace_wildcard(match):
+                    return random.choice(match.group(1).split("|"))
+
+                caption = re.sub(r"\{([^}]+)\}", replace_wildcard, caption)
+
+                # unescape the curly braces
+                caption = caption.replace(replacer1, "{").replace(replacer2, "}")
+
             if subset.shuffle_caption or subset.token_warmup_step > 0 or subset.caption_tag_dropout_rate > 0:
                 fixed_tokens = []
                 flex_tokens = []
+                fixed_suffix_tokens = []
                 if (
                     hasattr(subset, "keep_tokens_separator")
                     and subset.keep_tokens_separator
                     and subset.keep_tokens_separator in caption
                 ):
                     fixed_part, flex_part = caption.split(subset.keep_tokens_separator, 1)
+                    if subset.keep_tokens_separator in flex_part:
+                        flex_part, fixed_suffix_part = flex_part.split(subset.keep_tokens_separator, 1)
+                        fixed_suffix_tokens = [t.strip() for t in fixed_suffix_part.split(subset.caption_separator) if t.strip()]
+
                     fixed_tokens = [t.strip() for t in fixed_part.split(subset.caption_separator) if t.strip()]
                     flex_tokens = [t.strip() for t in flex_part.split(subset.caption_separator) if t.strip()]
                 else:
@@ -879,7 +922,11 @@ class BaseDataset(torch.utils.data.Dataset):
 
                 flex_tokens = dropout_tags(flex_tokens)
 
-                caption = ", ".join(fixed_tokens + flex_tokens)
+                caption = ", ".join(fixed_tokens + flex_tokens + fixed_suffix_tokens)
+
+            # process secondary separator
+            if subset.secondary_separator:
+                caption = caption.replace(subset.secondary_separator, subset.caption_separator)
 
             # textual inversion対応
             for str_from, str_to in self.replacements.items():
@@ -1971,6 +2018,8 @@ class ControlNetDataset(BaseDataset):
                 subset.keep_tokens_separator,
                 subset.use_object_template,
                 subset.use_style_template,
+                subset.secondary_separator,
+                subset.enable_wildcard,
                 subset.color_aug,
                 subset.flip_aug,
                 subset.rotate_aug,   
@@ -3355,6 +3404,18 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         default=None,
         help="set maximum time step for U-Net training (1~1000, default is 1000) / U-Net学習時のtime stepの最大値を設定する（1~1000で指定、省略時はデフォルト値(1000)）",
     )
+    parser.add_argument(
+        "--todo_factor",
+        type=float,
+        nargs="+",
+        help="token downsampling (ToDo) factor > 1 (recommend around 2-4). SD1/2 accepts up to 2 values (for depth_1 and depth_2)",
+    )
+    parser.add_argument(
+        "--todo_args",
+        type=str,
+        nargs="*",
+        help='additional arguments for ToDo (like "downsample_factor_depth_2=2")',
+    )
 
     parser.add_argument(
         "--lowram",
@@ -3635,6 +3696,18 @@ def add_dataset_arguments(
         "--use_style_template",
         action="store_true",
         help="prefix default templates for stype for caption text / キャプションは使わずデフォルトのスタイル用テンプレートで学習する",
+    )
+    parser.add_argument(
+        "--secondary_separator",
+        type=str,
+        default=None,
+        help="a secondary separator for caption. This separator is replaced to caption_separator after dropping/shuffling caption"
+        + " / captionのセカンダリ区切り文字。この区切り文字はcaptionのドロップやシャッフル後にcaption_separatorに置き換えられる",
+    )
+    parser.add_argument(
+        "--enable_wildcard",
+        action="store_true",
+        help="enable wildcard for caption (e.g. '{image|picture|rendition}') / captionのワイルドカードを有効にする（例：'{image|picture|rendition}'）",
     )
     parser.add_argument(
         "--caption_prefix",
@@ -4524,6 +4597,10 @@ def load_target_model(args, weight_dtype, accelerator, unet_use_linear_projectio
 
             clean_memory_on_device(accelerator.device)
         accelerator.wait_for_everyone()
+
+    # apply token merging patch
+    if args.todo_factor:
+        token_merging.patch_attention(unet, args)
 
     return text_encoder, vae, unet, load_stable_diffusion_format
 

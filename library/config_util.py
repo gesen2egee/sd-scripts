@@ -64,6 +64,8 @@ class BaseSubsetParams:
     keep_tokens_separator: str = (None,)
     use_object_template: bool = False
     use_style_template: bool = False 
+    secondary_separator: Optional[str] = None
+    enable_wildcard: bool = False
     color_aug: bool = False
     flip_aug: bool = False
     rotate_aug: bool = False
@@ -193,6 +195,8 @@ class ConfigSanitizer:
         "keep_tokens_separator": str,
         "use_object_template": bool,
         "use_style_template": bool,
+        "secondary_separator": str,
+        "enable_wildcard": bool,
         "token_warmup_min": int,
         "token_warmup_step": Any(float, int),
         "caption_prefix": str,
@@ -518,6 +522,8 @@ def generate_dataset_group_by_blueprint(dataset_group_blueprint: DatasetGroupBlu
           keep_tokens_separator: {subset.keep_tokens_separator}
           use_object_template: bool = {subset.use_object_template}
           use_style_template: bool = {subset.use_style_template}
+          secondary_separator: {subset.secondary_separator}
+          enable_wildcard: {subset.enable_wildcard}
           caption_dropout_rate: {subset.caption_dropout_rate}
           caption_dropout_every_n_epoches: {subset.caption_dropout_every_n_epochs}
           caption_tag_dropout_rate: {subset.caption_tag_dropout_rate}
