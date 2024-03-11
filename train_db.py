@@ -34,14 +34,12 @@ from library.custom_train_functions import (
     scale_v_prediction_loss_like_noise_prediction,
     apply_debiased_estimation,
 )
-from library.utils import setup_logging, add_logging_arguments
+from library.utils import setup_logging, add_logging_arguments, EMA, check_and_update_ema
 
 setup_logging()
 import logging
 
 logger = logging.getLogger(__name__)
-
-# perlin_noise,
 
 
 def train(args):
@@ -219,6 +217,10 @@ def train(args):
         unet.to(weight_dtype)
         text_encoder.to(weight_dtype)
 
+    if args.enable_ema:      # u-net only
+        raise NotImplementedError
+        emas = train_util.setup_emas(args, unet)
+
     # acceleratorがなんかよろしくやってくれるらしい
     if train_text_encoder:
         unet, text_encoder, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
@@ -367,6 +369,15 @@ def train(args):
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
+
+                if args.enable_ema:
+                    raise NotImplementedError
+                    for i, e in enumerate(emas):
+                        if args.ema_type == "post-hoc" and ((e.step + 1) % e.post_hoc_snapshot_every) == 0 and e.step != 0:
+                            #save snapshot
+                            pass
+                            # TODO
+                        check_and_update_ema(args, e, i)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
