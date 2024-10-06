@@ -5661,7 +5661,6 @@ def get_timesteps_and_huber_c(args, min_timestep, max_timestep, noise_scheduler,
         else:
             timesteps = (timesteps * shift) / (1 + (shift - 1) * timesteps)
         timesteps = min_timestep + (timesteps * (max_timestep - min_timestep))
-        timesteps = timesteps.view(-1, 1, 1, 1)
     else:
         timesteps = torch.randint(min_timestep, max_timestep, (b_size,), device="cpu")
 
