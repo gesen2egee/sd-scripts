@@ -87,6 +87,13 @@ logger = logging.getLogger(__name__)
 # from library.attention_processors import FlashAttnProcessor
 # from library.hypernetwork import replace_attentions_for_hypernetwork
 from library.original_unet import UNet2DConditionModel
+from imgutils.metrics import get_aesthetic_score, laplacian_score
+from imgutils.validate import anime_completeness_score
+from transparent_background import Remover
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+remover = Remover(mode='base-nightly', jit=True, device=device)
+os.environ['ONNX_MODE'] = 'gpu'
 
 HIGH_VRAM = False
 
@@ -2783,12 +2790,23 @@ def load_images_and_masks_for_caching(
         crop_ltrbs.append(crop_ltrb)
 
         if use_alpha_mask:
-            if image.shape[2] == 4:
-                alpha_mask = image[:, :, 3]  # [H,W]
-                alpha_mask = alpha_mask.astype(np.float32) / 255.0
-                alpha_mask = torch.FloatTensor(alpha_mask)  # [H,W]
+            #if image.shape[2] == 4:
+            #    alpha_mask = image[:, :, 3]  # [H,W]
+            #    alpha_mask = alpha_mask.astype(np.float32) / 255.0
+            #    alpha_mask = torch.FloatTensor(alpha_mask)  # [H,W]
+            #else:
+            #    alpha_mask = torch.ones_like(image[:, :, 0], dtype=torch.float32)  # [H,W]
+            if "simple background" in info.caption:
+                out = remover.process(image[:, :, :3], type='map')
+                mask = np.array(out)
+                alpha_mask = np.mean(mask, axis=2)
+                alpha_mask = torch.FloatTensor(alpha_mask.astype(np.float32)) / 255.0
             else:
-                alpha_mask = torch.ones_like(image[:, :, 0], dtype=torch.float32)  # [H,W]
+                image_tensor = torch.FloatTensor(image.astype(np.float32))
+                alpha_mask = torch.ones_like(image_tensor[:, :, 0], dtype=torch.float32)  # [H,W]
+            alpha_mask = alpha_mask * process_aesthetic(image[:, :, :3])
+            print(alpha_mask)
+
         else:
             alpha_mask = None
         alpha_masks.append(alpha_mask)
@@ -2800,6 +2818,14 @@ def load_images_and_masks_for_caching(
     img_tensor = torch.stack(images, dim=0)
     return img_tensor, alpha_masks, original_sizes, crop_ltrbs
 
+def process_aesthetic(image):
+    image = Image.fromarray(image)
+    anime_score = get_aesthetic_score(image) 
+    completeness_score = anime_completeness_score(image, model_name="caformer_s36_v2-beta")["polished"] 
+    score = completeness_score * anime_score
+    lapl_score = max((500 - laplacian_score(image)), 0) / 1000
+    score = max((completeness_score * anime_score) - lapl_score, 0) + 0.3
+    return score
 
 def cache_batch_latents(
     vae: AutoencoderKL, cache_to_disk: bool, image_infos: List[ImageInfo], flip_aug: bool, use_alpha_mask: bool, random_crop: bool
@@ -2824,12 +2850,22 @@ def cache_batch_latents(
         info.latents_crop_ltrb = crop_ltrb
 
         if use_alpha_mask:
-            if image.shape[2] == 4:
-                alpha_mask = image[:, :, 3]  # [H,W]
-                alpha_mask = alpha_mask.astype(np.float32) / 255.0
-                alpha_mask = torch.FloatTensor(alpha_mask)  # [H,W]
+            #if image.shape[2] == 4:
+            #    alpha_mask = image[:, :, 3]  # [H,W]
+            #    alpha_mask = alpha_mask.astype(np.float32) / 255.0
+            #    alpha_mask = torch.FloatTensor(alpha_mask)  # [H,W]
+            #else:
+            #    alpha_mask = torch.ones_like(image[:, :, 0], dtype=torch.float32)  # [H,W]
+            if "simple background" in info.caption:
+                out = remover.process(image[:, :, :3], type='map')
+                mask = np.array(out)
+                alpha_mask = np.mean(mask, axis=2)
+                alpha_mask = torch.FloatTensor(alpha_mask.astype(np.float32)) / 255.0
             else:
-                alpha_mask = torch.ones_like(image[:, :, 0], dtype=torch.float32)  # [H,W]
+                image_tensor = torch.FloatTensor(image.astype(np.float32))
+                alpha_mask = torch.ones_like(image_tensor[:, :, 0], dtype=torch.float32)  # [H,W]
+            alpha_mask = alpha_mask * process_aesthetic(image[:, :, :3])
+            print(alpha_mask)
         else:
             alpha_mask = None
         alpha_masks.append(alpha_mask)
