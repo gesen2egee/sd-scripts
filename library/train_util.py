@@ -8,6 +8,7 @@ import importlib
 import json
 import logging
 import pathlib
+from pathlib import Path
 import re
 import shutil
 import time
@@ -1431,8 +1432,17 @@ class BaseDataset(torch.utils.data.Dataset):
             subset = self.image_to_subset[image_key]
 
             # in case of fine tuning, is_reg is always False
-            loss_weights.append(self.prior_loss_weight if image_info.is_reg else 1.0)
-
+            loss_weight = self.prior_loss_weight if image_info.is_reg else 1.0
+            weight_file_path = Path(image_info.absolute_path).with_suffix('.weight')
+            if weight_file_path.exists(): 
+                with open(weight_file_path, 'r') as f:
+                    first_line = f.readline().strip()
+                    try:
+                        weight_multiplier = float(first_line)
+                        loss_weight *= weight_multiplier
+                    except ValueError:
+                        print(f"Warning: Could not convert {first_line} to float. Using default loss_weight.")
+            loss_weights.append(loss_weight)
             flipped = subset.flip_aug and random.random() < 0.5  # not flipped or flipped with 50% chance
 
             # image/latentsを処理する
