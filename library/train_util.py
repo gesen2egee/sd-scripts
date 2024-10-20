@@ -5760,12 +5760,15 @@ def get_lin_function(x1: float = 256, y1: float = 0.5, x2: float = 4096, y2: flo
     b = y1 - m * x1
     return lambda x: m * x + b
 
-def get_timesteps_and_huber_c(args, min_timestep, max_timestep, noise_scheduler, latents, device):
+def get_timesteps_and_huber_c(args, min_timestep, max_timestep, noise_scheduler, latents, device, batch=None):
     # Sample a random timestep for each image
     b_size, _, h, w = latents.shape
 
     if args.timestep_sampling != "uniform":
         shift = args.discrete_flow_shift
+        if batch is not None:
+            if sum(batch["loss_weights"]) / len(batch) > 0.7:
+                shift = 0.5
         logits_norm = torch.randn(b_size,  device="cpu")
         logits_norm = logits_norm * args.sigmoid_scale 
         timesteps = logits_norm.sigmoid()
@@ -5799,7 +5802,7 @@ def get_timesteps_and_huber_c(args, min_timestep, max_timestep, noise_scheduler,
     timesteps = timesteps.long().to(device)
     return timesteps, huber_c
 
-def get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents):
+def get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents, batch=None):
     # Sample noise that we'll add to the latents
     noise = torch.randn_like(latents, device=latents.device)
     if args.noise_offset:
@@ -5816,7 +5819,7 @@ def get_noise_noisy_latents_and_timesteps(args, noise_scheduler, latents):
     min_timestep = 0 if args.min_timestep is None else args.min_timestep
     max_timestep = noise_scheduler.config.num_train_timesteps if args.max_timestep is None else args.max_timestep
 
-    timesteps, huber_c = get_timesteps_and_huber_c(args, min_timestep, max_timestep, noise_scheduler, latents, latents.device)
+    timesteps, huber_c = get_timesteps_and_huber_c(args, min_timestep, max_timestep, noise_scheduler, latents, latents.device, batch)
 
     # Add noise to the latents according to the noise magnitude at each timestep
     # (this is the forward diffusion process)
