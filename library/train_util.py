@@ -1482,7 +1482,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
             # in case of fine tuning, is_reg is always False
             loss_weight = self.prior_loss_weight if image_info.is_reg else 1.0
-            weight_file_path = Path(image_info.absolute_path).with_suffix('.weight')
+            weight_file_path = Path(image_info.absolute_path).with_suffix('.final_weight')
             if weight_file_path.exists(): 
                 with open(weight_file_path, 'r') as f:
                     first_line = f.readline().strip()
@@ -2785,22 +2785,48 @@ def load_arbitrary_dataset(args, tokenizer=None) -> MinimalDataset:
     train_dataset_group: MinimalDataset = dataset_class(tokenizer, args.max_token_length, args.resolution, args.debug_dataset)
     return train_dataset_group
 
+def resize_and_center_crop(image, target_size):
+    tw, th = target_size
+    w, h = image.size
+    scale_factor = max(tw / w, th / h)
+    new_size = (int(w * scale_factor), int(h * scale_factor))
+    resized_image = image.resize(new_size, Image.LANCZOS)
+    left = (new_size[0] - tw) // 2
+    top = (new_size[1] - th) // 2
+    right = left + tw
+    bottom = top + th
+    return resized_image.crop((left, top, right, bottom))
 
 def load_image(image_path, alpha=False):
     try:
+        mask_path = Path(image_path).with_suffix('.mask')
         with Image.open(image_path) as image:
-            if alpha:
-                if not image.mode == "RGBA":
-                    image = image.convert("RGBA")
-            else:
-                if not image.mode == "RGB":
+            target_size = image.size
+            if alpha and mask_path.exists():
+                with Image.open(mask_path) as mask_image:
+                    if mask_image.mode != "L":
+                        mask_image = mask_image.convert("L")
+                    mask_image = resize_and_center_crop(mask_image, target_size)
+                    alpha_channel = np.array(mask_image, np.uint8)  # [H, W]
+                if image.mode != "RGB":
                     image = image.convert("RGB")
-            img = np.array(image, np.uint8)
+                rgb_array = np.array(image, np.uint8)  # [H, W, 3]
+                img = np.dstack((rgb_array, alpha_channel))  # [H, W, 4]
+            else:
+                if alpha:
+                    if image.mode != "RGBA":
+                        image = image.convert("RGBA")
+                else:
+                    if image.mode != "RGB":
+                        image = image.convert("RGB")
+
+                img = np.array(image, np.uint8)
+
             return img
+
     except (IOError, OSError) as e:
         logger.error(f"Error loading file: {image_path}")
         raise e
-
 
 # 画像を読み込む。戻り値はnumpy.ndarray,(original width, original height),(crop left, crop top, crop right, crop bottom)
 def trim_and_resize_if_required(
@@ -5766,9 +5792,6 @@ def get_timesteps_and_huber_c(args, min_timestep, max_timestep, noise_scheduler,
 
     if args.timestep_sampling != "uniform":
         shift = args.discrete_flow_shift
-        if batch is not None:
-            if sum(batch["loss_weights"]) / len(batch) > 0.7:
-                shift = 0.5
         logits_norm = torch.randn(b_size,  device="cpu")
         logits_norm = logits_norm * args.sigmoid_scale 
         timesteps = logits_norm.sigmoid()
