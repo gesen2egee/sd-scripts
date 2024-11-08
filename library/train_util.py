@@ -1514,7 +1514,7 @@ class BaseDataset(torch.utils.data.Dataset):
                     first_line = f.readline().strip()
                     try:
                         weight_multiplier = float(first_line)
-                        loss_weight *= weight_multiplier
+                        #loss_weight *= weight_multiplier
                     except ValueError:
                         print(f"Warning: Could not convert {first_line} to float. Using default loss_weight.")
             loss_weights.append(loss_weight)

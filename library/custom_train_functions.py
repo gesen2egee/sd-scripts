@@ -510,7 +510,8 @@ def apply_masked_loss(loss, batch):
 
     # resize to the same size as the loss
     mask_image = torch.nn.functional.interpolate(mask_image, size=loss.shape[2:], mode="area")
-    loss = loss * mask_image
+    effective_area = max(torch.mean(mask_image), 0.1)
+    loss = loss * mask_image / effective_area
     return loss
 
 
