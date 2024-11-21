@@ -3944,20 +3944,20 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         help="The huber loss parameter. Only used if one of the huber loss modes (huber or smooth l1) is selected with loss_type. default is 0.1 / Huber損失のパラメータ。loss_typeがhuberまたはsmooth l1の場合に有効。デフォルトは0.1",
     )
     parser.add_argument(
-        "--timestep_sampling",
+        "--timestep_sampling_1",
         choices=["uniform", "sigmoid", "shift", "flux_shift"],
         default="uniform",
         help="Method to sample timesteps: uniform random, sigmoid of random normal, shift of sigmoid and FLUX.1 shifting."
         " / タイムステップをサンプリングする方法：random uniform、random normalのsigmoid、sigmoidのシフト、FLUX.1のシフト。",
     )
     parser.add_argument(
-        "--sigmoid_scale",
+        "--sigmoid_scale_1",
         type=float,
         default=1.0,
         help='Scale factor for sigmoid timestep sampling (only used when timestep-sampling is "sigmoid"). / sigmoidタイムステップサンプリングの倍率（timestep-samplingが"sigmoid"の場合のみ有効）。',
     )
     parser.add_argument(
-        "--discrete_flow_shift",
+        "--discrete_flow_shift_1",
         type=float,
         default=1.0,
         help="Discrete flow shift for the Euler Discrete Scheduler, default is 3.0. / Euler Discrete Schedulerの離散フローシフト、デフォルトは3.0。",
@@ -5887,12 +5887,12 @@ def get_timesteps_and_huber_c(args, min_timestep, max_timestep, noise_scheduler,
     # Sample a random timestep for each image
     b_size, _, h, w = latents.shape
 
-    if args.timestep_sampling != "uniform":
-        shift = args.discrete_flow_shift
+    if args.timestep_sampling_1 != "uniform":
+        shift = args.discrete_flow_shift_1
         logits_norm = torch.randn(b_size,  device="cpu")
-        logits_norm = logits_norm * args.sigmoid_scale 
+        logits_norm = logits_norm * args.sigmoid_scale_1
         timesteps = logits_norm.sigmoid()
-        if args.timestep_sampling == "flux_shift":
+        if args.timestep_sampling_1 == "flux_shift":
             mu = get_lin_function(y1=0.5, y2=1.15)((h // 2) * (w // 2))
             timesteps = time_shift(mu, 1.0, timesteps)
         else:

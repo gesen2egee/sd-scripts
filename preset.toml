@@ -1,0 +1,34 @@
+enable_conv = true
+
+# An example for use different algo/settings in "full" preset
+unet_target_module = [
+  "Transformer2DModel", 
+  "ResnetBlock2D", 
+  "Downsample2D", 
+  "Upsample2D",
+]
+unet_target_name = [
+  ".*time_embed\\..+",
+  ".*label_emb\\..+",
+  ".*input_blocks\\.0.+",
+  "^out\\..+"
+]
+
+[module_algo_map]
+  [module_algo_map.CrossAttention]  
+    algo = "lokr"
+    dim = 10000
+    alpha = 10000
+    factor = 12
+  
+  [module_algo_map.FeedForward]     # MLP Layer in UNet
+    algo = "lokr"
+    dim = 10000
+    alpha = 10000
+    factor = 6
+  
+  [module_algo_map.SelfAttention]  
+    algo = "lokr"
+    dim = 10000
+    alpha = 10000
+    factor = 8
