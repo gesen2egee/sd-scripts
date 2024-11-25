@@ -4939,6 +4939,10 @@ def get_optimizer(args, trainable_params):
         elif optimizer_type == "SGDScheduleFree".lower():
             optimizer_class = sf.SGDScheduleFree
             logger.info(f"use SGDScheduleFree optimizer | {optimizer_kwargs}")
+        elif optimizer_type == "prodigyplus.prodigyplusschedulefree".lower():
+            import prodigyplus as pf
+            optimizer_class = pf.ProdigyPlusScheduleFree
+            logger.info(f"use ProdigyPlusSchudleFree optimizer | {optimizer_kwargs}")
         else:
             raise ValueError(f"Unknown optimizer type: {optimizer_type}")
         optimizer = optimizer_class(trainable_params, lr=lr, **optimizer_kwargs)

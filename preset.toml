@@ -17,18 +17,13 @@ unet_target_name = [
 [module_algo_map]
   [module_algo_map.CrossAttention]  
     algo = "lokr"
-    dim = 10000
-    alpha = 10000
+    dim = 100000
+    alpha = 100000
     factor = 12
   
   [module_algo_map.FeedForward]     # MLP Layer in UNet
     algo = "lokr"
-    dim = 10000
-    alpha = 10000
-    factor = 6
-  
-  [module_algo_map.SelfAttention]  
-    algo = "lokr"
-    dim = 10000
-    alpha = 10000
+    dim = 100000
+    alpha = 100000
     factor = 8
+  

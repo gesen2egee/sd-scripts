@@ -94,7 +94,12 @@ class NetworkTrainer:
                 logs[f"lr/d*lr/{lr_desc}"] = (
                     lr_scheduler.optimizers[-1].param_groups[i]["d"] * lr_scheduler.optimizers[-1].param_groups[i]["lr"]
                 )
-
+            if (
+                args.optimizer_type.lower().endswith("ProdigyPlusScheduleFree".lower())
+            ):  # tracking d*lr value of unet.
+                logs["lr/d*lr"] = (
+                    lr_scheduler.optimizer.param_groups[i]["d"] * lr_scheduler.optimizer.param_groups[i]["lr"]
+                )
         return logs
 
     def assert_extra_args(self, args, train_dataset_group):
