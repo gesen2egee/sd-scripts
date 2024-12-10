@@ -6,6 +6,7 @@ unet_target_module = [
   "ResnetBlock2D", 
   "Downsample2D", 
   "Upsample2D",
+  "SingleDiTBlock",
 ]
 unet_target_name = [
   ".*time_embed\\..+",

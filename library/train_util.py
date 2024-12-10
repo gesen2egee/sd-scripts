@@ -1486,7 +1486,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         if self.caching_mode is not None:  # return batch for latents/text encoder outputs caching
             return self.get_item_for_caching(bucket, bucket_batch_size, image_index)
-
+        images_paths = []
         loss_weights = []
         captions = []
         input_ids_list = []
@@ -1503,7 +1503,7 @@ class BaseDataset(torch.utils.data.Dataset):
         for image_key in bucket[image_index : image_index + bucket_batch_size]:
             image_info = self.image_data[image_key]
             subset = self.image_to_subset[image_key]
-
+            
             custom_attributes.append(subset.custom_attributes)
 
             # in case of fine tuning, is_reg is always False
@@ -1518,6 +1518,7 @@ class BaseDataset(torch.utils.data.Dataset):
                     except ValueError:
                         print(f"Warning: Could not convert {first_line} to float. Using default loss_weight.")
             loss_weights.append(loss_weight)
+            images_paths.append(image_info.absolute_path)
             flipped = subset.flip_aug and random.random() < 0.5  # not flipped or flipped with 50% chance
 
             # image/latentsを処理する
@@ -1711,6 +1712,7 @@ class BaseDataset(torch.utils.data.Dataset):
         else:
             images = None
         example["images"] = images
+        example["images_paths"] = images_paths
 
         example["latents"] = torch.stack(latents_list) if latents_list[0] is not None else None
         example["captions"] = captions
