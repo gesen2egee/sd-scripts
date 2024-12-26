@@ -26,5 +26,5 @@ unet_target_name = [
     algo = "lokr"
     dim = 100000
     alpha = 100000
-    factor = 8
+    factor = 6
   

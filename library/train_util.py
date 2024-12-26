@@ -4720,6 +4720,15 @@ def get_optimizer(args, trainable_params):
         optimizer_class = lion_pytorch.Lion
         optimizer = optimizer_class(trainable_params, lr=lr, **optimizer_kwargs)
 
+    elif optimizer_type == "SGD_sai".lower():
+        try:
+            from sgd_sai import SGD_sai
+        except ImportError:
+            raise ImportError("No SGD_sai / SGD_sai がインストールされていないようです")
+        logger.info(f"use SGD_sai optimizer | {optimizer_kwargs}")
+        optimizer_class = SGD_sai
+        optimizer = optimizer_class(trainable_params, lr=lr, **optimizer_kwargs)
+
     elif optimizer_type.endswith("8bit".lower()):
         try:
             import bitsandbytes as bnb
