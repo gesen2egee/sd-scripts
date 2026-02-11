@@ -2,7 +2,7 @@
 # Original code: NVIDIA CORPORATION & AFFILIATES, licensed under Apache-2.0
 
 import math
-from typing import Any, Callable, List, Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -14,7 +14,6 @@ import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
 
 from library import custom_offloading_utils, attention
-from library.device_utils import clean_memory_on_device
 
 
 def to_device(x, device):
@@ -123,26 +122,6 @@ class UnslothOffloadedGradientCheckpointer(torch.autograd.Function):
 def unsloth_checkpoint(function, *args):
     """Wrapper for UnslothOffloadedGradientCheckpointer."""
     return UnslothOffloadedGradientCheckpointer.apply(function, *args)
-
-
-# # Flash Attention support
-# try:
-#     from flash_attn.flash_attn_interface import flash_attn_func as _flash_attn_func
-#     FLASH_ATTN_AVAILABLE = True
-# except ImportError:
-#     _flash_attn_func = None
-#     FLASH_ATTN_AVAILABLE = False
-
-
-# def flash_attention_op(q_B_S_H_D: torch.Tensor, k_B_S_H_D: torch.Tensor, v_B_S_H_D: torch.Tensor) -> torch.Tensor:
-#     """Computes multi-head attention using Flash Attention.
-
-#     Input format: (batch, seq_len, n_heads, head_dim)
-#     Output format: (batch, seq_len, n_heads * head_dim) — matches torch_attention_op output.
-#     """
-#     # flash_attn_func expects (B, S, H, D) and returns (B, S, H, D)
-#     out = _flash_attn_func(q_B_S_H_D, k_B_S_H_D, v_B_S_H_D)
-#     return rearrange(out, "b s h d -> b s (h d)")
 
 
 from .utils import setup_logging
@@ -254,10 +233,10 @@ class RMSNorm(torch.nn.Module):
     def _norm(self, x: torch.Tensor) -> torch.Tensor:
         return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
 
-    @torch.amp.autocast(device_type="cuda", dtype=torch.float32)
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        output = self._norm(x.float()).type_as(x)
-        return output * self.weight
+        with torch.autocast(device_type=x.device.type, dtype=torch.float32):
+            output = self._norm(x.float()).type_as(x)
+            return output * self.weight
 
 
 class GPT2FeedForward(nn.Module):
@@ -288,20 +267,6 @@ class GPT2FeedForward(nn.Module):
         x = self.activation(x)
         x = self.layer2(x)
         return x
-
-
-def torch_attention_op(q_B_S_H_D: torch.Tensor, k_B_S_H_D: torch.Tensor, v_B_S_H_D: torch.Tensor) -> torch.Tensor:
-    """Computes multi-head attention using PyTorch's native scaled_dot_product_attention.
-
-    Input/output format: (batch, seq_len, n_heads, head_dim)
-    """
-    in_q_shape = q_B_S_H_D.shape
-    in_k_shape = k_B_S_H_D.shape
-    q_B_H_S_D = rearrange(q_B_S_H_D, "b ... h k -> b h ... k").view(in_q_shape[0], in_q_shape[-2], -1, in_q_shape[-1])
-    k_B_H_S_D = rearrange(k_B_S_H_D, "b ... h v -> b h ... v").view(in_k_shape[0], in_k_shape[-2], -1, in_k_shape[-1])
-    v_B_H_S_D = rearrange(v_B_S_H_D, "b ... h v -> b h ... v").view(in_k_shape[0], in_k_shape[-2], -1, in_k_shape[-1])
-    result_B_S_HD = rearrange(F.scaled_dot_product_attention(q_B_H_S_D, k_B_H_S_D, v_B_H_S_D), "b h ... l -> b ... (h l)")
-    return result_B_S_HD
 
 
 # Attention module for DiT
@@ -343,8 +308,6 @@ class Attention(nn.Module):
 
         self.output_proj = nn.Linear(inner_dim, query_dim, bias=False)
         self.output_dropout = nn.Dropout(dropout) if dropout > 1e-4 else nn.Identity()
-
-        self.attn_op = torch_attention_op
 
         self._query_dim = query_dim
         self._context_dim = context_dim
@@ -661,29 +624,30 @@ class TimestepEmbedding(nn.Module):
         return emb_B_T_D, adaln_lora_B_T_3D
 
 
-class FourierFeatures(nn.Module):
-    """Fourier feature transform: [B] -> [B, D]."""
+# Commented out Fourier Features (not used in Anima). Kept for reference.
+# class FourierFeatures(nn.Module):
+#     """Fourier feature transform: [B] -> [B, D]."""
 
-    def __init__(self, num_channels: int, bandwidth: int = 1, normalize: bool = False):
-        super().__init__()
-        self.register_buffer("freqs", 2 * np.pi * bandwidth * torch.randn(num_channels), persistent=True)
-        self.register_buffer("phases", 2 * np.pi * torch.rand(num_channels), persistent=True)
-        self.gain = np.sqrt(2) if normalize else 1
-        self.bandwidth = bandwidth
-        self.num_channels = num_channels
-        self.reset_parameters()
+#     def __init__(self, num_channels: int, bandwidth: int = 1, normalize: bool = False):
+#         super().__init__()
+#         self.register_buffer("freqs", 2 * np.pi * bandwidth * torch.randn(num_channels), persistent=True)
+#         self.register_buffer("phases", 2 * np.pi * torch.rand(num_channels), persistent=True)
+#         self.gain = np.sqrt(2) if normalize else 1
+#         self.bandwidth = bandwidth
+#         self.num_channels = num_channels
+#         self.reset_parameters()
 
-    def reset_parameters(self) -> None:
-        generator = torch.Generator()
-        generator.manual_seed(0)
-        self.freqs = 2 * np.pi * self.bandwidth * torch.randn(self.num_channels, generator=generator).to(self.freqs.device)
-        self.phases = 2 * np.pi * torch.rand(self.num_channels, generator=generator).to(self.freqs.device)
+#     def reset_parameters(self) -> None:
+#         generator = torch.Generator()
+#         generator.manual_seed(0)
+#         self.freqs = 2 * np.pi * self.bandwidth * torch.randn(self.num_channels, generator=generator).to(self.freqs.device)
+#         self.phases = 2 * np.pi * torch.rand(self.num_channels, generator=generator).to(self.freqs.device)
 
-    def forward(self, x: torch.Tensor, gain: float = 1.0) -> torch.Tensor:
-        in_dtype = x.dtype
-        x = x.to(torch.float32).ger(self.freqs.to(torch.float32)).add(self.phases.to(torch.float32))
-        x = x.cos().mul(self.gain * gain).to(in_dtype)
-        return x
+#     def forward(self, x: torch.Tensor, gain: float = 1.0) -> torch.Tensor:
+#         in_dtype = x.dtype
+#         x = x.to(torch.float32).ger(self.freqs.to(torch.float32)).add(self.phases.to(torch.float32))
+#         x = x.cos().mul(self.gain * gain).to(in_dtype)
+#         return x
 
 
 # Patch Embedding
@@ -1203,18 +1167,6 @@ class Anima(nn.Module):
     def dtype(self):
         return next(self.parameters()).dtype
 
-    # def set_flash_attn(self, use_flash_attn: bool):
-    #     """Toggle flash attention for all DiT blocks (self-attn + cross-attn).
-
-    #     LLM Adapter attention is NOT affected (it uses attention masks incompatible with flash_attn).
-    #     """
-    #     if use_flash_attn and not FLASH_ATTN_AVAILABLE:
-    #         raise ImportError("flash_attn package is required for --flash_attn but is not installed")
-    #     attn_op = flash_attention_op if use_flash_attn else torch_attention_op
-    #     for block in self.blocks:
-    #         block.self_attn.attn_op = attn_op
-    #         block.cross_attn.attn_op = attn_op
-
     def build_patch_embed(self) -> None:
         in_channels = self.in_channels + 1 if self.concat_padding_mask else self.in_channels
         self.x_embedder = PatchEmbed(
@@ -1385,13 +1337,7 @@ class Anima(nn.Module):
             if self.blocks_to_swap:
                 self.offloader.wait_for_block(block_idx)
 
-            x_B_T_H_W_D = block(
-                x_B_T_H_W_D,
-                t_embedding_B_T_D,
-                crossattn_emb,
-                attn_params,
-                **block_kwargs,
-            )
+            x_B_T_H_W_D = block(x_B_T_H_W_D, t_embedding_B_T_D, crossattn_emb, attn_params, **block_kwargs)
 
             if self.blocks_to_swap:
                 self.offloader.submit_move_blocks(self.blocks, block_idx)
@@ -1419,10 +1365,6 @@ class Anima(nn.Module):
         self, source_hidden_states, target_input_ids, target_attention_mask=None, source_attention_mask=None
     ):
         if target_input_ids is not None:
-            # print(
-            #     f"Source hidden states shape: {source_hidden_states.shape},sum of attention mask: {torch.sum(source_attention_mask)}"
-            # )
-            # print(f"non zero source_hidden_states before LLM Adapter: {torch.sum(source_hidden_states != 0)}")
             context = self.llm_adapter(
                 source_hidden_states,
                 target_input_ids,
@@ -1430,7 +1372,6 @@ class Anima(nn.Module):
                 source_attention_mask=source_attention_mask,
             )
             context[~target_attention_mask.bool()] = 0  # zero out padding tokens
-            # print(f"LLM Adapter output context: {context.shape}, {torch.isnan(context).sum()}")
             return context
         else:
             return source_hidden_states
@@ -1662,98 +1603,56 @@ class LLMAdapter(nn.Module):
         return self.norm(self.out_proj(x))
 
 
-# VAE Wrapper
+# Not used currently, but kept for reference
 
-# VAE normalization constants
-ANIMA_VAE_MEAN = [
-    -0.7571,
-    -0.7089,
-    -0.9113,
-    0.1075,
-    -0.1745,
-    0.9653,
-    -0.1517,
-    1.5508,
-    0.4134,
-    -0.0715,
-    0.5517,
-    -0.3632,
-    -0.1922,
-    -0.9497,
-    0.2503,
-    -0.2921,
-]
-ANIMA_VAE_STD = [
-    2.8184,
-    1.4541,
-    2.3275,
-    2.6558,
-    1.2196,
-    1.7708,
-    2.6052,
-    2.0743,
-    3.2687,
-    2.1526,
-    2.8652,
-    1.5579,
-    1.6382,
-    1.1253,
-    2.8251,
-    1.9160,
-]
+# def get_dit_config(state_dict, key_prefix=""):
+#     """Derive DiT configuration from state_dict weight shapes."""
+#     dit_config = {}
+#     dit_config["max_img_h"] = 512
+#     dit_config["max_img_w"] = 512
+#     dit_config["max_frames"] = 128
+#     concat_padding_mask = True
+#     dit_config["in_channels"] = (state_dict["{}x_embedder.proj.1.weight".format(key_prefix)].shape[1] // 4) - int(
+#         concat_padding_mask
+#     )
+#     dit_config["out_channels"] = 16
+#     dit_config["patch_spatial"] = 2
+#     dit_config["patch_temporal"] = 1
+#     dit_config["model_channels"] = state_dict["{}x_embedder.proj.1.weight".format(key_prefix)].shape[0]
+#     dit_config["concat_padding_mask"] = concat_padding_mask
+#     dit_config["crossattn_emb_channels"] = 1024
+#     dit_config["pos_emb_cls"] = "rope3d"
+#     dit_config["pos_emb_learnable"] = True
+#     dit_config["pos_emb_interpolation"] = "crop"
+#     dit_config["min_fps"] = 1
+#     dit_config["max_fps"] = 30
 
-# DiT config detection from state_dict
-KEEP_IN_HIGH_PRECISION = ["x_embedder", "t_embedder", "t_embedding_norm", "final_layer"]
+#     dit_config["use_adaln_lora"] = True
+#     dit_config["adaln_lora_dim"] = 256
+#     if dit_config["model_channels"] == 2048:
+#         dit_config["num_blocks"] = 28
+#         dit_config["num_heads"] = 16
+#     elif dit_config["model_channels"] == 5120:
+#         dit_config["num_blocks"] = 36
+#         dit_config["num_heads"] = 40
+#     elif dit_config["model_channels"] == 1280:
+#         dit_config["num_blocks"] = 20
+#         dit_config["num_heads"] = 20
 
+#     if dit_config["in_channels"] == 16:
+#         dit_config["extra_per_block_abs_pos_emb"] = False
+#         dit_config["rope_h_extrapolation_ratio"] = 4.0
+#         dit_config["rope_w_extrapolation_ratio"] = 4.0
+#         dit_config["rope_t_extrapolation_ratio"] = 1.0
+#     elif dit_config["in_channels"] == 17:
+#         dit_config["extra_per_block_abs_pos_emb"] = False
+#         dit_config["rope_h_extrapolation_ratio"] = 3.0
+#         dit_config["rope_w_extrapolation_ratio"] = 3.0
+#         dit_config["rope_t_extrapolation_ratio"] = 1.0
 
-def get_dit_config(state_dict, key_prefix=""):
-    """Derive DiT configuration from state_dict weight shapes."""
-    dit_config = {}
-    dit_config["max_img_h"] = 512
-    dit_config["max_img_w"] = 512
-    dit_config["max_frames"] = 128
-    concat_padding_mask = True
-    dit_config["in_channels"] = (state_dict["{}x_embedder.proj.1.weight".format(key_prefix)].shape[1] // 4) - int(
-        concat_padding_mask
-    )
-    dit_config["out_channels"] = 16
-    dit_config["patch_spatial"] = 2
-    dit_config["patch_temporal"] = 1
-    dit_config["model_channels"] = state_dict["{}x_embedder.proj.1.weight".format(key_prefix)].shape[0]
-    dit_config["concat_padding_mask"] = concat_padding_mask
-    dit_config["crossattn_emb_channels"] = 1024
-    dit_config["pos_emb_cls"] = "rope3d"
-    dit_config["pos_emb_learnable"] = True
-    dit_config["pos_emb_interpolation"] = "crop"
-    dit_config["min_fps"] = 1
-    dit_config["max_fps"] = 30
+#     dit_config["extra_h_extrapolation_ratio"] = 1.0
+#     dit_config["extra_w_extrapolation_ratio"] = 1.0
+#     dit_config["extra_t_extrapolation_ratio"] = 1.0
+#     dit_config["rope_enable_fps_modulation"] = False
 
-    dit_config["use_adaln_lora"] = True
-    dit_config["adaln_lora_dim"] = 256
-    if dit_config["model_channels"] == 2048:
-        dit_config["num_blocks"] = 28
-        dit_config["num_heads"] = 16
-    elif dit_config["model_channels"] == 5120:
-        dit_config["num_blocks"] = 36
-        dit_config["num_heads"] = 40
-    elif dit_config["model_channels"] == 1280:
-        dit_config["num_blocks"] = 20
-        dit_config["num_heads"] = 20
-
-    if dit_config["in_channels"] == 16:
-        dit_config["extra_per_block_abs_pos_emb"] = False
-        dit_config["rope_h_extrapolation_ratio"] = 4.0
-        dit_config["rope_w_extrapolation_ratio"] = 4.0
-        dit_config["rope_t_extrapolation_ratio"] = 1.0
-    elif dit_config["in_channels"] == 17:
-        dit_config["extra_per_block_abs_pos_emb"] = False
-        dit_config["rope_h_extrapolation_ratio"] = 3.0
-        dit_config["rope_w_extrapolation_ratio"] = 3.0
-        dit_config["rope_t_extrapolation_ratio"] = 1.0
-
-    dit_config["extra_h_extrapolation_ratio"] = 1.0
-    dit_config["extra_w_extrapolation_ratio"] = 1.0
-    dit_config["extra_t_extrapolation_ratio"] = 1.0
-    dit_config["rope_enable_fps_modulation"] = False
-
-    return dit_config
+#     return dit_config
