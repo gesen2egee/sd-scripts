@@ -12,10 +12,10 @@ dataset_config = './anima_dataset_config.toml'
 [output]
 output_dir = 'D:\SDXL\ComfyUI_windows_portable\ComfyUI\models\loras'
 logging_dir = 'D:\SDXL\ComfyUI_windows_portable\ComfyUI\models\loras\_logs_anima'
-output_name = 'loli anima 3'
+output_name = 'miss valentine anima'
 save_model_as = 'safetensors'
 save_precision = 'bf16'
-save_every_n_steps = 500
+save_every_n_steps = 250
 
 [network]
 network_module = 'networks.lora_anima'
@@ -29,7 +29,7 @@ network_args = []
 learning_rate = 1
 text_encoder_lr = 0.0
 optimizer_type = 'adv_optm.Prodigy_adv'
-optimizer_args = ['weight_decay=0.1', 'cautious_wd=True', 'Simplified_AdEMAMix=True', 'compiled_optimizer=True', 'kourkoutas_beta=True', 'k_warmup_steps=300']
+optimizer_args = ['weight_decay=0.1', 'cautious_wd=True', 'Simplified_AdEMAMix=True', 'compiled_optimizer=False', 'kourkoutas_beta=True', 'k_warmup_steps=300']
 lr_scheduler = 'cosine'
 lr_warmup_steps = 0
 train_batch_size = 2
@@ -48,7 +48,7 @@ cache_text_encoder_outputs = true
 cache_text_encoder_outputs_to_disk = true
 
 [anima]
-timestep_sample_method = 'sigmoid'
+timestep_sampling = 'sigmoid'
 discrete_flow_shift = 1.0
 sigmoid_scale = 1.0
 qwen3_max_token_length = 512

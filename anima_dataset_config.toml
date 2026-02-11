@@ -13,7 +13,6 @@ bucket_no_upscale = false
 
   [[datasets.subsets]]
   # Change this to your training image folder.
-  image_dir = 'D:/SDXL/ai-toolkit/datasets/1_loli'
+  image_dir = 'E:/NE/20_miss valentine'
   num_repeats = 1
   caption_extension = '.txt'
-  class_tokens = 'loli'
