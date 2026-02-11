@@ -4,15 +4,17 @@ diffusers[torch]==0.32.1
 ftfy==6.3.1
 # albumentations==1.3.0
 opencv-python==4.10.0.84
-adv-optm==2.2.1
 einops==0.7.0
 # pytorch-lightning==1.9.0
 bitsandbytes
 lion-pytorch==0.2.3
 schedulefree==1.4
 pytorch-optimizer==3.9.0
-prodigy-plus-schedule-free==1.9.2
+prodigy-plus-schedule-free==2.0.1
 prodigyopt==1.1.2
+torch-optimi==0.3.3
+adv-optm==2.2.1
+lycoris-lora==3.4.0
 tensorboard
 safetensors==0.4.5
 # gradio==3.16.2
