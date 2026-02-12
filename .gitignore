@@ -11,3 +11,5 @@ GEMINI.md
 .claude
 .gemini
 MagicMock
+anima_dataset_config.toml
+anima_train_config.toml
