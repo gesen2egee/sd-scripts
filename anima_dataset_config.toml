@@ -3,13 +3,13 @@ shuffle_caption = false
 caption_extension = '.txt'
 
 [[datasets]]
-resolution = [512, 512]
+resolution = [640, 640]
 batch_size = 1
 enable_bucket = true
 min_bucket_reso = 256
-max_bucket_reso = 768
-bucket_reso_steps = 32
-bucket_no_upscale = false
+max_bucket_reso = 1024
+bucket_reso_steps = 16
+bucket_no_upscale = true
 
   [[datasets.subsets]]
   # Same source folder (pass 1 / 512 profile).
@@ -23,8 +23,8 @@ batch_size = 1
 enable_bucket = true
 min_bucket_reso = 384
 max_bucket_reso = 1152
-bucket_reso_steps = 32
-bucket_no_upscale = false
+bucket_reso_steps = 16
+bucket_no_upscale = true
 
   [[datasets.subsets]]
   # Same source folder (pass 2 / 768 profile).
@@ -38,8 +38,8 @@ batch_size = 1
 enable_bucket = true
 min_bucket_reso = 512
 max_bucket_reso = 1536
-bucket_reso_steps = 32
-bucket_no_upscale = false
+bucket_reso_steps = 16
+bucket_no_upscale = true
 
   [[datasets.subsets]]
   # Same source folder (pass 3 / 1024 profile).
