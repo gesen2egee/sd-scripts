@@ -14,7 +14,8 @@ prodigy-plus-schedule-free==2.0.1
 prodigyopt==1.1.2
 torch-optimi==0.3.3
 adv-optm==2.2.1
-lycoris-lora==3.4.0
+# custom repo is synced to venv by update/install scripts
+git+https://github.com/gesen2egee/LyCORIS.git
 tensorboard
 safetensors==0.4.5
 # gradio==3.16.2

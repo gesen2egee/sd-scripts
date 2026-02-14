@@ -17,6 +17,8 @@ if not exist "requirements.txt" (
   echo [ERROR] requirements.txt not found. Run this script from the sd-scripts root folder.
   exit /b 1
 )
+set "CUSTOM_REPO_URL=https://github.com/gesen2egee/custom.git"
+set "CUSTOM_TMP_DIR=%CD%\.tmp_custom_repo"
 
 if not defined TORCH_VERSION set "TORCH_VERSION=2.6.0"
 if not defined TORCHVISION_VERSION set "TORCHVISION_VERSION=0.21.0"
@@ -31,6 +33,12 @@ if not defined CUDA_TAG (
   )
 )
 set "PYTORCH_INDEX_URL=https://download.pytorch.org/whl/%CUDA_TAG%"
+
+where git >nul 2>&1
+if errorlevel 1 (
+  echo [ERROR] git was not found in PATH.
+  exit /b 1
+)
 
 where python >nul 2>&1
 if %errorlevel%==0 (
@@ -90,6 +98,11 @@ if errorlevel 1 (
   exit /b 1
 )
 
+call :sync_custom_repo
+if errorlevel 1 (
+  exit /b 1
+)
+
 if not defined INSTALL_XFORMERS (
   set /p INSTALL_XFORMERS=Install xformers (optional)? [Y/n]:
   if "!INSTALL_XFORMERS!"=="" set "INSTALL_XFORMERS=Y"
@@ -132,6 +145,45 @@ if /I "!RUN_ACCELERATE!"=="Y" (
 echo.
 echo [SUCCESS] Installation completed.
 echo [INFO] Next time activate with: venv\Scripts\activate.bat
+exit /b 0
+
+:sync_custom_repo
+echo [INFO] Syncing custom repo into venv site-packages...
+if exist "%CUSTOM_TMP_DIR%\.git" (
+  git -C "%CUSTOM_TMP_DIR%" pull --ff-only
+) else (
+  if exist "%CUSTOM_TMP_DIR%" rmdir /s /q "%CUSTOM_TMP_DIR%"
+  git clone --depth 1 "%CUSTOM_REPO_URL%" "%CUSTOM_TMP_DIR%"
+)
+if errorlevel 1 (
+  echo [ERROR] Failed to update custom repo: %CUSTOM_REPO_URL%
+  exit /b 1
+)
+
+set "SITE_PACKAGES="
+for /f "usebackq delims=" %%I in (`python -c "import sysconfig; print(sysconfig.get_paths()['purelib'])"`) do set "SITE_PACKAGES=%%I"
+if not defined SITE_PACKAGES (
+  echo [ERROR] Failed to detect site-packages path.
+  exit /b 1
+)
+
+set "CUSTOM_SITE_DIR=%SITE_PACKAGES%\custom"
+if exist "%CUSTOM_SITE_DIR%" (
+  rmdir /s /q "%CUSTOM_SITE_DIR%"
+  if exist "%CUSTOM_SITE_DIR%" (
+    echo [ERROR] Failed to remove old custom package: %CUSTOM_SITE_DIR%
+    exit /b 1
+  )
+)
+
+mkdir "%CUSTOM_SITE_DIR%" >nul 2>nul
+robocopy "%CUSTOM_TMP_DIR%" "%CUSTOM_SITE_DIR%" /E /XD .git >nul
+set "ROBOCOPY_RC=%errorlevel%"
+if %ROBOCOPY_RC% GEQ 8 (
+  echo [ERROR] Failed to copy custom package to venv. robocopy exit code: %ROBOCOPY_RC%
+  exit /b 1
+)
+echo [INFO] custom package synced: %CUSTOM_SITE_DIR%
 exit /b 0
 
 :help
