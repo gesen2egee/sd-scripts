@@ -86,6 +86,11 @@ class NetworkTrainer:
             logs["norm/avg_combined_norm"] = mean_combined_norm
 
         lrs = lr_scheduler.get_last_lr()
+        optimizer_type_lower = (args.optimizer_type or "").lower()
+        is_dadapt_optimizer = optimizer_type_lower.startswith("dadapt")
+        is_prodigy_optimizer = "prodigy" in optimizer_type_lower
+        is_prodigy_schedule_free = optimizer_type_lower.endswith("prodigyplusschedulefree")
+
         for i, lr in enumerate(lrs):
             if lr_descriptions is not None:
                 lr_desc = lr_descriptions[i]
@@ -101,14 +106,12 @@ class NetworkTrainer:
 
             logs[f"lr/{lr_desc}"] = lr
 
-            if args.optimizer_type.lower().startswith("DAdapt".lower()) or args.optimizer_type.lower() == "Prodigy".lower():
+            if is_dadapt_optimizer or (is_prodigy_optimizer and not is_prodigy_schedule_free):
                 # tracking d*lr value
                 logs[f"lr/d*lr/{lr_desc}"] = (
                     lr_scheduler.optimizers[-1].param_groups[i]["d"] * lr_scheduler.optimizers[-1].param_groups[i]["lr"]
                 )
-            if (
-                args.optimizer_type.lower().endswith("ProdigyPlusScheduleFree".lower()) and optimizer is not None
-            ):  # tracking d*lr value of unet.
+            if is_prodigy_schedule_free and optimizer is not None:  # tracking d*lr value of unet.
                 logs["lr/d*lr"] = optimizer.param_groups[0]["d"] * optimizer.param_groups[0]["lr"]
         else:
             idx = 0
@@ -118,11 +121,11 @@ class NetworkTrainer:
 
             for i in range(idx, len(lrs)):
                 logs[f"lr/group{i}"] = float(lrs[i])
-                if args.optimizer_type.lower().startswith("DAdapt".lower()) or args.optimizer_type.lower() == "Prodigy".lower():
+                if is_dadapt_optimizer or (is_prodigy_optimizer and not is_prodigy_schedule_free):
                     logs[f"lr/d*lr/group{i}"] = (
                         lr_scheduler.optimizers[-1].param_groups[i]["d"] * lr_scheduler.optimizers[-1].param_groups[i]["lr"]
                     )
-                if args.optimizer_type.lower().endswith("ProdigyPlusScheduleFree".lower()) and optimizer is not None:
+                if is_prodigy_schedule_free and optimizer is not None:
                     logs[f"lr/d*lr/group{i}"] = optimizer.param_groups[i]["d"] * optimizer.param_groups[i]["lr"]
 
         return logs
