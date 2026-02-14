@@ -1,6 +1,10 @@
 # Anima LoRA training script
 
 import argparse
+import ast
+import re
+import types
+from collections import Counter
 from typing import Any, Optional, Union
 
 import torch
@@ -74,6 +78,20 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
             assert (
                 args.blocks_to_swap is None or args.blocks_to_swap == 0
             ), "blocks_to_swap is not supported with unsloth_offload_checkpointing"
+
+        # Bridge Anima's llm_adapter_lr to a network arg, keeping explicit user setting as priority.
+        if args.network_module == "lycoris.kohya":
+            if args.network_args is None:
+                args.network_args = []
+            has_train_llm_adapter = any(
+                net_arg.split("=", 1)[0].strip() == "train_llm_adapter" for net_arg in args.network_args
+            )
+            if not has_train_llm_adapter and args.llm_adapter_lr is not None:
+                train_llm_adapter = args.llm_adapter_lr > 0
+                args.network_args.append(f"train_llm_adapter={'true' if train_llm_adapter else 'false'}")
+                logger.info(
+                    f"auto-set network_args train_llm_adapter={train_llm_adapter} from llm_adapter_lr={args.llm_adapter_lr}"
+                )
 
         train_dataset_group.verify_bucket_reso_steps(16)  # WanVAE spatial downscale = 8 and patch size = 2
         if val_dataset_group is not None:
@@ -153,7 +171,271 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
         return strategy_anima.AnimaTextEncodingStrategy()
 
     def post_process_network(self, args, accelerator, network, text_encoders, unet):
-        pass
+        if args.network_module != "lycoris.kohya":
+            return
+        if not hasattr(network, "unet_loras") or not hasattr(network, "text_encoder_loras"):
+            logger.warning("LyCORIS network object has no expected lora lists, skip post-processing.")
+            return
+
+        net_kwargs = {}
+        if args.network_args is not None:
+            for net_arg in args.network_args:
+                if "=" not in net_arg:
+                    continue
+                key, value = net_arg.split("=", 1)
+                net_kwargs[key.strip()] = value.strip()
+
+        def parse_bool(v: Optional[str], default: bool = False) -> bool:
+            if v is None:
+                return default
+            return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+        def parse_pattern_list(v: Optional[str], arg_name: str) -> list[str]:
+            if v is None:
+                return []
+            try:
+                obj = ast.literal_eval(v)
+            except Exception:
+                obj = v
+            if isinstance(obj, str):
+                return [obj]
+            if isinstance(obj, (list, tuple)):
+                return [str(x) for x in obj]
+            logger.warning(f"{arg_name} should be string/list; got {type(obj).__name__}, ignored.")
+            return []
+
+        def compile_patterns(patterns: list[str], label: str) -> list[re.Pattern]:
+            out = []
+            for p in patterns:
+                try:
+                    out.append(re.compile(p))
+                except re.error as e:
+                    logger.warning(f"Invalid regex in {label}: {p} ({e})")
+            return out
+
+        # Match lora_anima behavior: default exclusion + user exclusion, with include overriding exclusion.
+        exclude_patterns = [r".*(_modulation|_norm|_embedder|final_layer).*"]
+        exclude_patterns.extend(parse_pattern_list(net_kwargs.get("exclude_patterns"), "exclude_patterns"))
+        include_patterns = parse_pattern_list(net_kwargs.get("include_patterns"), "include_patterns")
+        verbose = parse_bool(net_kwargs.get("verbose"), False)
+        try:
+            report_limit = int(net_kwargs.get("report_limit", "0"))
+        except ValueError:
+            report_limit = 0
+
+        train_llm_adapter = parse_bool(net_kwargs.get("train_llm_adapter"), args.llm_adapter_lr is not None and args.llm_adapter_lr > 0)
+        if not train_llm_adapter:
+            exclude_patterns.append(r".*llm_adapter.*")
+
+        exclude_re = compile_patterns(exclude_patterns, "exclude_patterns")
+        include_re = compile_patterns(include_patterns, "include_patterns")
+
+        unet_name_map = {id(m): n for n, m in unet.named_modules()}
+        te_name_map = {}
+        if text_encoders is not None:
+            tes = text_encoders if isinstance(text_encoders, list) else [text_encoders]
+            for te in tes:
+                if te is None:
+                    continue
+                for n, m in te.named_modules():
+                    te_name_map[id(m)] = n
+
+        logger.info("LyCORIS post-process report")
+        logger.info("  target network module: %s", args.network_module)
+        logger.info("  train_llm_adapter: %s", train_llm_adapter)
+        logger.info("  default exclude pattern: %s", r".*(_modulation|_norm|_embedder|final_layer).*")
+        logger.info("  user exclude patterns: %s", parse_pattern_list(net_kwargs.get("exclude_patterns"), "exclude_patterns"))
+        logger.info("  user include patterns: %s", include_patterns)
+        logger.info("  network_reg_lrs: %s", net_kwargs.get("network_reg_lrs", "(not set)"))
+        if args.network_train_unet_only:
+            logger.info("  note: network_train_unet_only=true, effective TE module count is reported as 0")
+
+        def resolve_original_name(lora_obj, is_unet: bool) -> str:
+            name_map = unet_name_map if is_unet else te_name_map
+            try:
+                module_obj = lora_obj.org_module[0]
+            except Exception:
+                module_obj = None
+            if module_obj is not None:
+                mapped = name_map.get(id(module_obj))
+                if mapped is not None:
+                    return mapped
+            return getattr(lora_obj, "lora_name", "")
+
+        def should_drop(name: str) -> tuple[bool, str]:
+            matched_excludes = [p.pattern for p in exclude_re if p.fullmatch(name)]
+            if not matched_excludes:
+                return False, ""
+            matched_includes = [p.pattern for p in include_re if p.fullmatch(name)]
+            if matched_includes:
+                return False, ""
+            return True, "excluded_by=" + " | ".join(matched_excludes)
+
+        def filter_loras(loras: list, is_unet: bool) -> tuple[list, int, list[tuple[str, str]]]:
+            kept = []
+            removed = 0
+            removed_items: list[tuple[str, str]] = []
+            for lora in loras:
+                original_name = resolve_original_name(lora, is_unet)
+                setattr(lora, "original_name", original_name)
+                drop, reason = should_drop(original_name)
+                if drop:
+                    removed += 1
+                    removed_items.append((original_name, reason))
+                    if verbose:
+                        logger.info("LyCORIS post-filter drop: %s (%s)", original_name, reason)
+                    continue
+                kept.append(lora)
+            return kept, removed, removed_items
+
+        te_before = len(network.text_encoder_loras)
+        unet_before = len(network.unet_loras)
+        network.text_encoder_loras, te_removed, te_removed_items = filter_loras(network.text_encoder_loras, is_unet=False)
+        network.unet_loras, unet_removed, unet_removed_items = filter_loras(network.unet_loras, is_unet=True)
+        network.loras = network.text_encoder_loras + network.unet_loras
+
+        if args.network_train_unet_only:
+            te_before_log = 0
+            te_after_log = 0
+            te_removed_log = 0
+        else:
+            te_before_log = te_before
+            te_after_log = len(network.text_encoder_loras)
+            te_removed_log = te_removed
+
+        logger.info(
+            "LyCORIS post-filter: TE %d -> %d (removed %d), U-Net %d -> %d (removed %d)",
+            te_before_log,
+            te_after_log,
+            te_removed_log,
+            unet_before,
+            len(network.unet_loras),
+            unet_removed,
+        )
+        total_removed_items = [("Text Encoder", n, r) for n, r in te_removed_items] + [("U-Net", n, r) for n, r in unet_removed_items]
+        if total_removed_items:
+            logger.info("LyCORIS post-filter changed module count: %d", len(total_removed_items))
+            reason_counter = Counter([reason for _, _, reason in total_removed_items])
+            for reason, cnt in reason_counter.items():
+                logger.info("  changed by reason: %s -> %d modules", reason, cnt)
+            if verbose and report_limit > 0:
+                preview = total_removed_items[: max(report_limit, 0)]
+                for scope, name, reason in preview:
+                    logger.info("  changed [%s]: %s (%s)", scope, name, reason)
+                if len(total_removed_items) > len(preview):
+                    logger.info("  ... and %d more changed modules", len(total_removed_items) - len(preview))
+        else:
+            logger.info("LyCORIS post-filter changed module count: 0")
+
+        # Optional regex-based LR override by module original name.
+        reg_lr_spec = net_kwargs.get("network_reg_lrs")
+        if not reg_lr_spec:
+            return
+
+        reg_lrs = []
+        for pair in reg_lr_spec.split(","):
+            pair = pair.strip()
+            if not pair:
+                continue
+            if "=" not in pair:
+                logger.warning(f"Invalid network_reg_lrs item: {pair}, expected pattern=lr")
+                continue
+            pattern, lr_str = pair.split("=", 1)
+            pattern = pattern.strip()
+            lr_str = lr_str.strip()
+            try:
+                reg = re.compile(pattern)
+                lr_val = float(lr_str)
+            except Exception as e:
+                logger.warning(f"Invalid network_reg_lrs item: {pair} ({e})")
+                continue
+            reg_lrs.append((reg, pattern, lr_val))
+            logger.info("  network_reg_lrs rule: %s -> lr=%s", pattern, lr_val)
+
+        if not reg_lrs:
+            return
+
+        def rule_for_module_name(module_name: str):
+            for reg, pattern, lr_val in reg_lrs:
+                if reg.fullmatch(module_name):
+                    return pattern, lr_val
+            return None, None
+
+        all_loras_for_stats = list(network.text_encoder_loras) + list(network.unet_loras)
+        rule_hits = Counter()
+        matched_module_count = 0
+        for lora in all_loras_for_stats:
+            module_name = getattr(lora, "original_name", getattr(lora, "lora_name", ""))
+            pattern, lr_val = rule_for_module_name(module_name)
+            if pattern is not None:
+                matched_module_count += 1
+                rule_hits[f"{pattern} => {lr_val}"] += 1
+
+        logger.info(
+            "network_reg_lrs match summary: matched_modules=%d / total_modules=%d",
+            matched_module_count,
+            len(all_loras_for_stats),
+        )
+        if rule_hits:
+            for k, v in rule_hits.items():
+                logger.info("  network_reg_lrs hit: %s (modules=%d)", k, v)
+        else:
+            logger.info("  network_reg_lrs hit: none")
+
+        def match_reg_lr(module_name: str, default_lr: Optional[float]) -> Optional[float]:
+            _, lr_val = rule_for_module_name(module_name)
+            if lr_val is not None:
+                return lr_val
+            return default_lr
+
+        def build_groups(loras: list, base_lr: Optional[float], plus_ratio: Optional[float], scope: str):
+            grouped = {}
+            descriptions = []
+            for lora in loras:
+                module_name = getattr(lora, "original_name", getattr(lora, "lora_name", ""))
+                module_lr = match_reg_lr(module_name, base_lr)
+                for p_name, param in lora.named_parameters():
+                    lr_val = module_lr
+                    desc = scope
+                    if plus_ratio is not None and "lora_up" in p_name:
+                        lr_val = None if lr_val is None else lr_val * plus_ratio
+                        desc += " plus"
+                    if lr_val is None or lr_val == 0:
+                        continue
+                    key = (lr_val, desc)
+                    if key not in grouped:
+                        grouped[key] = []
+                    grouped[key].append(param)
+            param_groups = []
+            for (lr_val, desc), params in grouped.items():
+                param_groups.append({"params": params, "lr": lr_val})
+                descriptions.append(desc)
+            return param_groups, descriptions
+
+        def patched_prepare_optimizer_params(self, text_encoder_lr=None, unet_lr: float = 1e-4, learning_rate=None):
+            self.requires_grad_(True)
+            all_params = []
+            lr_descriptions = []
+
+            te_base_lr = text_encoder_lr if text_encoder_lr is not None else learning_rate
+            unet_base_lr = unet_lr if unet_lr is not None else learning_rate
+
+            if self.text_encoder_loras:
+                te_ratio = self.loraplus_text_encoder_lr_ratio or self.loraplus_lr_ratio
+                params, descriptions = build_groups(self.text_encoder_loras, te_base_lr, te_ratio, "textencoder")
+                all_params.extend(params)
+                lr_descriptions.extend(descriptions)
+
+            if self.unet_loras:
+                unet_ratio = self.loraplus_unet_lr_ratio or self.loraplus_lr_ratio
+                params, descriptions = build_groups(self.unet_loras, unet_base_lr, unet_ratio, "unet")
+                all_params.extend(params)
+                lr_descriptions.extend(descriptions)
+
+            return all_params, lr_descriptions
+
+        network.prepare_optimizer_params = types.MethodType(patched_prepare_optimizer_params, network)
+        logger.info("Enabled network_reg_lrs override for LyCORIS optimizer param groups.")
 
     def get_models_for_text_encoding(self, args, accelerator, text_encoders):
         if args.cache_text_encoder_outputs:

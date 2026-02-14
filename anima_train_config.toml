@@ -12,27 +12,25 @@ dataset_config = './anima_dataset_config.toml'
 [output]
 output_dir = 'D:\SDXL\ComfyUI_windows_portable\ComfyUI\models\loras'
 logging_dir = 'D:\SDXL\ComfyUI_windows_portable\ComfyUI\models\loras\_logs_anima'
-output_name = 'miss valentine anima 3'
+output_name = 'miss valentine anima 5'
 save_model_as = 'safetensors'
 save_precision = 'bf16'
 save_every_n_steps = 250
 
 [network]
-network_module = 'networks.lora_anima'
-network_dim = 32
-network_alpha = 1
+network_module = 'lycoris.kohya'
+network_args = ["algo=lokr", "factor=10", "full_matrix=True"]
 network_train_unet_only = true
 # Keep minimal LoRA targets first for stability.
-network_args = []
 
 [train]
 learning_rate = 1
 text_encoder_lr = 0.0
 llm_adapter_lr = 0.0
 optimizer_type = 'adv_optm.Prodigy_adv'
-optimizer_args = ['weight_decay=0.1', 'cautious_wd=True','kourkoutas_beta=True', 'k_warmup_steps=300']
+optimizer_args = ['d0=5e-5', 'weight_decay=0.1', 'cautious_wd=True','kourkoutas_beta=True', 'k_warmup_steps=300', "compiled_optimizer=False"]
 lr_scheduler = 'cosine'
-lr_warmup_steps = 0
+lr_warmup_steps = 300
 train_batch_size = 1
 max_grad_norm = 1.0
 max_train_steps = 3000
@@ -49,6 +47,7 @@ cache_text_encoder_outputs = true
 cache_text_encoder_outputs_to_disk = true
 
 [anima]
-timestep_sampling = 'flux_shift'
+timestep_sampling = 'sigmoid'
+discrete_flow_shift = 1
 qwen3_max_token_length = 512
 t5_max_token_length = 512
