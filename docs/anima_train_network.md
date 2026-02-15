@@ -184,6 +184,10 @@ Besides the arguments explained in the [train_network.py guide](train_network.md
   - Shift for the timestep distribution in Rectified Flow training. Default `1.0`. This value is used when `--timestep_sampling` is set to **`shift`**. The shift formula is `t_shifted = (t * shift) / (1 + (shift - 1) * t)`.
 * `--sigmoid_scale=<float>`
   - Scale factor when `--timestep_sampling` is set to `sigmoid`, `shift`, or `flux_shift`. Default `1.0`.
+* `--random_noise_shift=<float>`
+  - Standard deviation for per-sample, per-channel random noise shift. This adds `N(0, random_noise_shift)` with shape `(B, C, 1, 1)` to the sampled noise. Default `0.0` (disabled).
+* `--random_noise_multiplier=<float>`
+  - Standard deviation for log-normal random noise scaling. This multiplies sampled noise by `exp(N(0, random_noise_multiplier))` with shape `(B, 1, 1, 1)`. Default `0.0` (disabled).
 * `--qwen3_max_token_length=<integer>`
   - Maximum token length for the Qwen3 tokenizer. Default `512`.
 * `--t5_max_token_length=<integer>`
@@ -252,6 +256,8 @@ For LoRA training, use `network_reg_lrs` in `--network_args` instead. See [Secti
 * `--timestep_sampling` - タイムステップのサンプリング方法。`sigma`、`uniform`、`sigmoid`（デフォルト）、`shift`、`flux_shift`から選択。FLUX学習と同じオプションです。各方法の詳細は[flux_train_network.pyのガイド](flux_train_network.md)を参照してください。
 * `--discrete_flow_shift` - Rectified Flow学習のタイムステップ分布シフト。デフォルト`1.0`。`--timestep_sampling`が`shift`の場合に使用されます。
 * `--sigmoid_scale` - `sigmoid`、`shift`、`flux_shift`タイムステップサンプリングのスケール係数。デフォルト`1.0`。
+* `--random_noise_shift` - サンプルごと・チャネルごとのランダムノイズシフトの標準偏差。`(B, C, 1, 1)` 形状の `N(0, random_noise_shift)` をノイズに加算します。デフォルトは `0.0`（無効）。
+* `--random_noise_multiplier` - 対数正規のランダムノイズ倍率の標準偏差。ノイズに `(B, 1, 1, 1)` 形状の `exp(N(0, random_noise_multiplier))` を乗算します。デフォルトは `0.0`（無効）。
 * `--qwen3_max_token_length` - Qwen3トークナイザーの最大トークン長。デフォルト`512`。
 * `--t5_max_token_length` - T5トークナイザーの最大トークン長。デフォルト`512`。
 * `--attn_mode` - 使用するAttentionの実装。`torch`（デフォルト）、`xformers`、`flash`、`sageattn`から選択。`xformers`は`--split_attn`の指定が必要です。`sageattn`はトレーニングをサポートしていません（推論のみ）。
@@ -578,6 +584,10 @@ Qwen3に個別の学習率を指定するには`--text_encoder_lr`を使用し�
 
 - **`--ip_noise_gamma`**, **`--ip_noise_gamma_random_strength`**: Input Perturbation noise gamma values.
 
+- **`--random_noise_shift`**, **`--random_noise_multiplier`**: Extra noise augmentation for sampled training noise.
+  - `random_noise_shift`: Adds per-sample, per-channel Gaussian shift.
+  - `random_noise_multiplier`: Applies per-sample log-normal multiplier.
+
 - **`--fused_backward_pass`**: Fuses the backward pass and optimizer step to reduce VRAM usage. Only works with Adafactor. For details, see the [`sdxl_train_network.py` guide](sdxl_train_network.md).
 
 - **`--weighting_scheme`**, **`--logit_mean`**, **`--logit_std`**, **`--mode_scale`**: Timestep loss weighting options. For details, refer to the [`sd3_train_network.md` guide](sd3_train_network.md).
@@ -588,6 +598,9 @@ Qwen3に個別の学習率を指定するには`--text_encoder_lr`を使用し�
 - **`--loss_type`**: 学習に用いる損失関数。デフォルト`l2`。`l1`, `l2`, `huber`, `smooth_l1`から選択。
 - **`--huber_schedule`**, **`--huber_c`**, **`--huber_scale`**: Huber損失のパラメータ。
 - **`--ip_noise_gamma`**: Input Perturbationノイズガンマ値。
+- **`--random_noise_shift`**, **`--random_noise_multiplier`**: 学習時に使うサンプルノイズへの追加拡張。
+  - `random_noise_shift`: サンプルごと・チャネルごとのガウシアンシフトを加算。
+  - `random_noise_multiplier`: サンプルごとの対数正規倍率を乗算。
 - **`--fused_backward_pass`**: バックワードパスとオプティマイザステップの融合。
 - **`--weighting_scheme`** 等: タイムステップ損失の重み付け。詳細は[`sd3_train_network.md`](sd3_train_network.md)を参照。
 

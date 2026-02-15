@@ -49,5 +49,7 @@ cache_text_encoder_outputs_to_disk = true
 [anima]
 timestep_sampling = 'sigmoid'
 discrete_flow_shift = 1
+random_noise_shift = 0.1
+random_noise_multiplier = 0.5
 qwen3_max_token_length = 512
 t5_max_token_length = 512

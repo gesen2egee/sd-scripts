@@ -45,6 +45,11 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
         train_dataset_group: Union[train_util.DatasetGroup, train_util.MinimalDataset],
         val_dataset_group: Optional[train_util.DatasetGroup],
     ):
+        if args.random_noise_shift < 0.0:
+            raise ValueError("random_noise_shift must be greater than or equal to 0.0")
+        if args.random_noise_multiplier < 0.0:
+            raise ValueError("random_noise_multiplier must be greater than or equal to 0.0")
+
         if args.fp8_base or args.fp8_base_unet:
             logger.warning("fp8_base and fp8_base_unet are not supported. / fp8_baseとfp8_base_unetはサポートされていません。")
             args.fp8_base = False
@@ -553,6 +558,24 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
         if latents.ndim == 5:  # Fallback for 5D latents (old cache)
             latents = latents.squeeze(2)  # [B, C, 1, H, W] -> [B, C, H, W]
         noise = torch.randn_like(latents)
+        batch_size = latents.shape[0]
+
+        if args.random_noise_shift > 0.0:
+            noise_shift = torch.randn(
+                batch_size,
+                latents.shape[1],
+                1,
+                1,
+                device=noise.device,
+                dtype=noise.dtype,
+            ) * args.random_noise_shift
+            noise = noise + noise_shift
+
+        if args.random_noise_multiplier > 0.0:
+            noise_multiplier = torch.exp(
+                torch.randn(batch_size, 1, 1, 1, device=noise.device, dtype=noise.dtype) * args.random_noise_multiplier
+            )
+            noise = noise * noise_multiplier
 
         # Get noisy model input and timesteps
         noisy_model_input, timesteps, sigmas = flux_train_utils.get_noisy_model_input_and_timesteps(
@@ -669,6 +692,8 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
         metadata["ss_timestep_sampling"] = args.timestep_sampling
         metadata["ss_sigmoid_scale"] = args.sigmoid_scale
         metadata["ss_discrete_flow_shift"] = args.discrete_flow_shift
+        metadata["ss_random_noise_shift"] = args.random_noise_shift
+        metadata["ss_random_noise_multiplier"] = args.random_noise_multiplier
 
     def is_text_encoder_not_needed_for_training(self, args):
         return args.cache_text_encoder_outputs and not self.is_train_text_encoder(args)
@@ -706,6 +731,18 @@ def setup_parser() -> argparse.ArgumentParser:
     parser = train_network.setup_parser()
     train_util.add_dit_training_arguments(parser)
     anima_train_utils.add_anima_training_arguments(parser)
+    parser.add_argument(
+        "--random_noise_shift",
+        type=float,
+        default=0.0,
+        help="stddev of per-sample per-channel random noise shift (disabled when 0.0)",
+    )
+    parser.add_argument(
+        "--random_noise_multiplier",
+        type=float,
+        default=0.0,
+        help="stddev of log-normal random noise multiplier (disabled when 0.0)",
+    )
     # parser.add_argument("--fp8_scaled", action="store_true", help="Use scaled fp8 for DiT / DiTにスケーリングされたfp8を使う")
     parser.add_argument(
         "--unsloth_offload_checkpointing",
