@@ -13,3 +13,16 @@ GEMINI.md
 MagicMock
 .tmp_custom_repo
 
+# Unified temporary workspace (logs/plans/tmp files go here)
+/temp/**
+!/temp/
+!/temp/.gitkeep
+!/temp/logs/
+!/temp/logs/.gitkeep
+!/temp/plans/
+!/temp/plans/.gitkeep
+!/temp/plan/
+!/temp/plan/.gitkeep
+!/temp/tmp/
+!/temp/tmp/.gitkeep
+

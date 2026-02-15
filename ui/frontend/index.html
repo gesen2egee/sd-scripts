@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ANIMA 批次訓練介面</title>
+  <script>
+    (function () {
+      try {
+        const raw = localStorage.getItem("anima_ui_state_v2");
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        const pref = (parsed && parsed.theme_preference)
+          || (parsed && parsed.ui_state && parsed.ui_state.theme_preference)
+          || "system";
+        const resolved = pref === "dark" || pref === "light"
+          ? pref
+          : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        document.documentElement.setAttribute("data-theme", resolved);
+      } catch (_) {
+        // ignore theme preload errors
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="title-wrap">
+      <h1 id="app-title">ANIMA 批次訓練介面</h1>
+      <p id="defaults-warning" class="warning" hidden></p>
+    </div>
+    <div class="toolbar">
+      <label for="theme-select" id="theme-label"></label>
+      <select id="theme-select">
+        <option value="system"></option>
+        <option value="light"></option>
+        <option value="dark"></option>
+      </select>
+      <label for="lang-select" id="lang-label"></label>
+      <select id="lang-select">
+        <option value="zh-TW">繁體中文</option>
+        <option value="en">English</option>
+      </select>
+      <button id="add-profile-btn"></button>
+      <button id="duplicate-profile-btn"></button>
+      <button id="delete-profile-btn" class="danger"></button>
+      <button id="export-btn"></button>
+      <button id="import-btn"></button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="panel step-panel">
+      <h2 id="steps-title"></h2>
+      <nav id="step-nav" class="step-nav"></nav>
+    </aside>
+
+    <section class="panel workspace-panel">
+      <div id="profile-tabs" class="tabs profile-tabs"></div>
+      <div class="profile-head">
+        <div class="field-inline grow">
+          <label id="label-profile-name" for="profile-name-input"></label>
+          <input id="profile-name-input" type="text" />
+        </div>
+        <div class="field-inline">
+          <label id="label-run-enabled" for="run-enabled-input"></label>
+          <input id="run-enabled-input" type="checkbox" />
+        </div>
+      </div>
+      <div id="section-tabs" class="tabs section-tabs"></div>
+      <p id="section-help" class="section-help"></p>
+      <div id="section-content" class="section-content"></div>
+
+      <div id="action-bar" class="action-bar">
+        <div class="button-row">
+          <button id="action-validate" class="primary"></button>
+          <button id="action-start" class="primary"></button>
+          <button id="action-stop" class="danger"></button>
+        </div>
+        <div class="button-row">
+          <button id="action-start-tb"></button>
+          <button id="action-stop-tb" class="danger"></button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="panel status-panel">
+      <h2 id="status-title"></h2>
+      <div class="status-cards">
+        <article class="status-card">
+          <h3 id="card-batch-state-label"></h3>
+          <p id="card-batch-state" class="status-pill"></p>
+        </article>
+        <article class="status-card">
+          <h3 id="card-current-job-label"></h3>
+          <p id="card-current-job"></p>
+        </article>
+        <article class="status-card split">
+          <div>
+            <h3 id="card-queue-label"></h3>
+            <p id="card-queue-count"></p>
+          </div>
+          <div>
+            <h3 id="card-total-label"></h3>
+            <p id="card-total-count"></p>
+          </div>
+        </article>
+        <article class="status-card">
+          <h3 id="card-last-error-label"></h3>
+          <p id="card-last-error"></p>
+        </article>
+        <article class="status-card">
+          <h3 id="card-tb-label"></h3>
+          <p id="card-tb-status"></p>
+        </article>
+      </div>
+
+      <h3 id="jobs-title"></h3>
+      <pre id="status-jobs" class="status-output"></pre>
+      <h3 id="log-preview-title"></h3>
+      <pre id="log-preview" class="status-output"></pre>
+      <div id="messages" class="messages" aria-live="polite"></div>
+    </aside>
+  </main>
+
+  <input id="import-file" type="file" accept="application/json,.json" hidden />
+
+  <script src="/app.js"></script>
+</body>
+</html>

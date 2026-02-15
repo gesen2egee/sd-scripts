@@ -48,8 +48,6 @@ pause
 exit /b 0
 
 :run_all
-call :run_profile "E:\NE\20_miss valentine" "miss valentine anima"
-if errorlevel 1 exit /b 1
 
 call :run_profile "D:\SDXL\ai-toolkit\datasets\1_wang yu wen" "wang yu wen anima"
 if errorlevel 1 exit /b 1
@@ -105,7 +103,7 @@ set "CFG_IMAGE_DIR=%~2"
   echo.
   echo [[datasets]]
   echo resolution = [1024, 1024]
-  echo batch_size = 1
+  echo batch_size = 2
   echo enable_bucket = true
   echo min_bucket_reso = 512
   echo max_bucket_reso = 1280
@@ -119,7 +117,7 @@ set "CFG_IMAGE_DIR=%~2"
   echo.
   echo [[datasets]]
   echo resolution = [640, 640]
-  echo batch_size = 1
+  echo batch_size = 2
   echo enable_bucket = true
   echo min_bucket_reso = 256
   echo max_bucket_reso = 1024
@@ -133,7 +131,7 @@ set "CFG_IMAGE_DIR=%~2"
   echo.
   echo [[datasets]]
   echo resolution = [768, 768]
-  echo batch_size = 1
+  echo batch_size = 2
   echo enable_bucket = true
   echo min_bucket_reso = 384
   echo max_bucket_reso = 1152
