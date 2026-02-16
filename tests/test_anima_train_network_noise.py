@@ -61,8 +61,9 @@ def _parse_default_args():
     return parser, args
 
 
-def _run_and_capture_noise(monkeypatch, args, latents):
-    trainer = anima_train_network.AnimaNetworkTrainer()
+def _run_and_capture_noise(monkeypatch, args, latents, trainer=None, is_train=True):
+    if trainer is None:
+        trainer = anima_train_network.AnimaNetworkTrainer()
     captured = {}
 
     def fake_get_noisy_model_input_and_timesteps(args, noise_scheduler, latents, noise, device, dtype):
@@ -96,7 +97,7 @@ def _run_and_capture_noise(monkeypatch, args, latents):
         network=None,
         weight_dtype=latents.dtype,
         train_unet=True,
-        is_train=True,
+        is_train=is_train,
     )
     return captured["noise"]
 
@@ -105,14 +106,35 @@ def test_parser_default_values_for_random_noise_args():
     _, args = _parse_default_args()
     assert args.random_noise_shift == 0.0
     assert args.random_noise_multiplier == 0.0
+    assert args.random_noise_shift_random_strength is False
+    assert args.random_noise_multiplier_random_strength is False
+    assert args.random_noise_shift_decay == 1.0
+    assert args.random_noise_multiplier_decay == 1.0
 
 
 def test_parser_can_parse_random_noise_args_from_cli():
     with patch("sys.argv", [""]):
         parser = anima_train_network.setup_parser()
-        args = parser.parse_args(["--random_noise_shift", "0.1", "--random_noise_multiplier", "0.2"])
+        args = parser.parse_args(
+            [
+                "--random_noise_shift",
+                "0.1",
+                "--random_noise_multiplier",
+                "0.2",
+                "--random_noise_shift_random_strength",
+                "--random_noise_multiplier_random_strength",
+                "--random_noise_shift_decay",
+                "0.99",
+                "--random_noise_multiplier_decay",
+                "0.98",
+            ]
+        )
     assert args.random_noise_shift == 0.1
     assert args.random_noise_multiplier == 0.2
+    assert args.random_noise_shift_random_strength is True
+    assert args.random_noise_multiplier_random_strength is True
+    assert args.random_noise_shift_decay == 0.99
+    assert args.random_noise_multiplier_decay == 0.98
 
 
 def test_config_file_can_set_random_noise_args(tmp_path: Path):
@@ -123,6 +145,10 @@ def test_config_file_can_set_random_noise_args(tmp_path: Path):
                 "[anima]",
                 "random_noise_shift = 0.1",
                 "random_noise_multiplier = 0.2",
+                "random_noise_shift_random_strength = true",
+                "random_noise_multiplier_random_strength = true",
+                "random_noise_shift_decay = 0.99",
+                "random_noise_multiplier_decay = 0.98",
             ]
         ),
         encoding="utf-8",
@@ -136,6 +162,10 @@ def test_config_file_can_set_random_noise_args(tmp_path: Path):
 
     assert args.random_noise_shift == 0.1
     assert args.random_noise_multiplier == 0.2
+    assert args.random_noise_shift_random_strength is True
+    assert args.random_noise_multiplier_random_strength is True
+    assert args.random_noise_shift_decay == 0.99
+    assert args.random_noise_multiplier_decay == 0.98
 
 
 def test_assert_extra_args_rejects_negative_values():
@@ -150,6 +180,16 @@ def test_assert_extra_args_rejects_negative_values():
     args.random_noise_shift = 0.0
     args.random_noise_multiplier = -0.01
     with pytest.raises(ValueError, match="random_noise_multiplier"):
+        trainer.assert_extra_args(args, dataset, None)
+
+    args.random_noise_multiplier = 0.0
+    args.random_noise_shift_decay = 1.1
+    with pytest.raises(ValueError, match="random_noise_shift_decay"):
+        trainer.assert_extra_args(args, dataset, None)
+
+    args.random_noise_shift_decay = 1.0
+    args.random_noise_multiplier_decay = -0.1
+    with pytest.raises(ValueError, match="random_noise_multiplier_decay"):
         trainer.assert_extra_args(args, dataset, None)
 
 
@@ -187,3 +227,52 @@ def test_noise_augmentation_changes_noise_and_preserves_shape_dtype_device(monke
         assert noise.shape == latents.shape
         assert noise.dtype == latents.dtype
         assert noise.device == latents.device
+
+
+def test_random_strength_flags_change_noise(monkeypatch):
+    _, args = _parse_default_args()
+    args.gradient_checkpointing = False
+    args.weighting_scheme = "none"
+    latents = torch.randn(2, 4, 8, 8, dtype=torch.float32)
+
+    args.random_noise_shift = 0.2
+    args.random_noise_multiplier = 0.3
+    args.random_noise_shift_random_strength = False
+    args.random_noise_multiplier_random_strength = False
+    torch.manual_seed(4321)
+    fixed_strength_noise = _run_and_capture_noise(monkeypatch, args, latents)
+
+    args.random_noise_shift_random_strength = True
+    args.random_noise_multiplier_random_strength = True
+    torch.manual_seed(4321)
+    random_strength_noise = _run_and_capture_noise(monkeypatch, args, latents)
+
+    assert not torch.equal(fixed_strength_noise, random_strength_noise)
+
+
+def test_decay_updates_internal_strength_per_training_step(monkeypatch):
+    _, args = _parse_default_args()
+    args.gradient_checkpointing = False
+    args.weighting_scheme = "none"
+    args.random_noise_shift = 0.2
+    args.random_noise_multiplier = 0.4
+    args.random_noise_shift_decay = 0.5
+    args.random_noise_multiplier_decay = 0.25
+    args.random_noise_shift_random_strength = False
+    args.random_noise_multiplier_random_strength = False
+    latents = torch.randn(2, 4, 8, 8, dtype=torch.float32)
+    trainer = anima_train_network.AnimaNetworkTrainer()
+
+    _run_and_capture_noise(monkeypatch, args, latents, trainer=trainer, is_train=True)
+    assert trainer._random_noise_shift_current == pytest.approx(0.1)
+    assert trainer._random_noise_multiplier_current == pytest.approx(0.1)
+
+    _run_and_capture_noise(monkeypatch, args, latents, trainer=trainer, is_train=True)
+    assert trainer._random_noise_shift_current == pytest.approx(0.05)
+    assert trainer._random_noise_multiplier_current == pytest.approx(0.025)
+
+    shift_before = trainer._random_noise_shift_current
+    multiplier_before = trainer._random_noise_multiplier_current
+    _run_and_capture_noise(monkeypatch, args, latents, trainer=trainer, is_train=False)
+    assert trainer._random_noise_shift_current == pytest.approx(shift_before)
+    assert trainer._random_noise_multiplier_current == pytest.approx(multiplier_before)

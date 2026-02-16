@@ -188,6 +188,14 @@ Besides the arguments explained in the [train_network.py guide](train_network.md
   - Standard deviation for per-sample, per-channel random noise shift. This adds `N(0, random_noise_shift)` with shape `(B, C, 1, 1)` to the sampled noise. Default `0.0` (disabled).
 * `--random_noise_multiplier=<float>`
   - Standard deviation for log-normal random noise scaling. This multiplies sampled noise by `exp(N(0, random_noise_multiplier))` with shape `(B, 1, 1, 1)`. Default `0.0` (disabled).
+* `--random_noise_shift_random_strength`
+  - Use random strength between `0~random_noise_shift` for random noise shift.
+* `--random_noise_multiplier_random_strength`
+  - Use random strength between `0~random_noise_multiplier` for random noise multiplier.
+* `--random_noise_shift_decay=<float>`
+  - Decay factor for `random_noise_shift`, applied every training step (`0.0~1.0`). For example, `0.999` means `current_shift = previous_shift * 0.999`.
+* `--random_noise_multiplier_decay=<float>`
+  - Decay factor for `random_noise_multiplier`, applied every training step (`0.0~1.0`). For example, `0.999` means `current_multiplier = previous_multiplier * 0.999`.
 * `--qwen3_max_token_length=<integer>`
   - Maximum token length for the Qwen3 tokenizer. Default `512`.
 * `--t5_max_token_length=<integer>`
@@ -258,6 +266,10 @@ For LoRA training, use `network_reg_lrs` in `--network_args` instead. See [Secti
 * `--sigmoid_scale` - `sigmoid`、`shift`、`flux_shift`タイムステップサンプリングのスケール係数。デフォルト`1.0`。
 * `--random_noise_shift` - サンプルごと・チャネルごとのランダムノイズシフトの標準偏差。`(B, C, 1, 1)` 形状の `N(0, random_noise_shift)` をノイズに加算します。デフォルトは `0.0`（無効）。
 * `--random_noise_multiplier` - 対数正規のランダムノイズ倍率の標準偏差。ノイズに `(B, 1, 1, 1)` 形状の `exp(N(0, random_noise_multiplier))` を乗算します。デフォルトは `0.0`（無効）。
+* `--random_noise_shift_random_strength` - `random_noise_shift` に対して `0~random_noise_shift` のランダム強度を使います。
+* `--random_noise_multiplier_random_strength` - `random_noise_multiplier` に対して `0~random_noise_multiplier` のランダム強度を使います。
+* `--random_noise_shift_decay` - `random_noise_shift` の減衰率（`0.0~1.0`）。学習ステップごとに適用されます。例：`0.999` なら `current_shift = previous_shift * 0.999`。
+* `--random_noise_multiplier_decay` - `random_noise_multiplier` の減衰率（`0.0~1.0`）。学習ステップごとに適用されます。例：`0.999` なら `current_multiplier = previous_multiplier * 0.999`。
 * `--qwen3_max_token_length` - Qwen3トークナイザーの最大トークン長。デフォルト`512`。
 * `--t5_max_token_length` - T5トークナイザーの最大トークン長。デフォルト`512`。
 * `--attn_mode` - 使用するAttentionの実装。`torch`（デフォルト）、`xformers`、`flash`、`sageattn`から選択。`xformers`は`--split_attn`の指定が必要です。`sageattn`はトレーニングをサポートしていません（推論のみ）。
@@ -587,6 +599,10 @@ Qwen3に個別の学習率を指定するには`--text_encoder_lr`を使用し�
 - **`--random_noise_shift`**, **`--random_noise_multiplier`**: Extra noise augmentation for sampled training noise.
   - `random_noise_shift`: Adds per-sample, per-channel Gaussian shift.
   - `random_noise_multiplier`: Applies per-sample log-normal multiplier.
+  - `random_noise_shift_random_strength`: Uses random strength `0~random_noise_shift`.
+  - `random_noise_multiplier_random_strength`: Uses random strength `0~random_noise_multiplier`.
+  - `random_noise_shift_decay`: Decays shift value each training step.
+  - `random_noise_multiplier_decay`: Decays multiplier value each training step.
 
 - **`--fused_backward_pass`**: Fuses the backward pass and optimizer step to reduce VRAM usage. Only works with Adafactor. For details, see the [`sdxl_train_network.py` guide](sdxl_train_network.md).
 
@@ -601,6 +617,10 @@ Qwen3に個別の学習率を指定するには`--text_encoder_lr`を使用し�
 - **`--random_noise_shift`**, **`--random_noise_multiplier`**: 学習時に使うサンプルノイズへの追加拡張。
   - `random_noise_shift`: サンプルごと・チャネルごとのガウシアンシフトを加算。
   - `random_noise_multiplier`: サンプルごとの対数正規倍率を乗算。
+  - `random_noise_shift_random_strength`: `0~random_noise_shift` のランダム強度を使用。
+  - `random_noise_multiplier_random_strength`: `0~random_noise_multiplier` のランダム強度を使用。
+  - `random_noise_shift_decay`: 学習ステップごとに shift 値を減衰。
+  - `random_noise_multiplier_decay`: 学習ステップごとに multiplier 値を減衰。
 - **`--fused_backward_pass`**: バックワードパスとオプティマイザステップの融合。
 - **`--weighting_scheme`** 等: タイムステップ損失の重み付け。詳細は[`sd3_train_network.md`](sd3_train_network.md)を参照。
 

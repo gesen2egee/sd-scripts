@@ -38,6 +38,8 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
     def __init__(self):
         super().__init__()
         self.sample_prompts_te_outputs = None
+        self._random_noise_shift_current: Optional[float] = None
+        self._random_noise_multiplier_current: Optional[float] = None
 
     def assert_extra_args(
         self,
@@ -49,6 +51,10 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
             raise ValueError("random_noise_shift must be greater than or equal to 0.0")
         if args.random_noise_multiplier < 0.0:
             raise ValueError("random_noise_multiplier must be greater than or equal to 0.0")
+        if args.random_noise_shift_decay < 0.0 or args.random_noise_shift_decay > 1.0:
+            raise ValueError("random_noise_shift_decay must be between 0.0 and 1.0")
+        if args.random_noise_multiplier_decay < 0.0 or args.random_noise_multiplier_decay > 1.0:
+            raise ValueError("random_noise_multiplier_decay must be between 0.0 and 1.0")
 
         if args.fp8_base or args.fp8_base_unet:
             logger.warning("fp8_base and fp8_base_unet are not supported. / fp8_baseとfp8_base_unetはサポートされていません。")
@@ -560,7 +566,19 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
         noise = torch.randn_like(latents)
         batch_size = latents.shape[0]
 
-        if args.random_noise_shift > 0.0:
+        if self._random_noise_shift_current is None:
+            self._random_noise_shift_current = float(args.random_noise_shift)
+        if self._random_noise_multiplier_current is None:
+            self._random_noise_multiplier_current = float(args.random_noise_multiplier)
+
+        random_noise_shift_base = self._random_noise_shift_current
+        random_noise_multiplier_base = self._random_noise_multiplier_current
+
+        if random_noise_shift_base > 0.0:
+            if args.random_noise_shift_random_strength:
+                random_noise_shift = torch.rand(1, device=noise.device, dtype=noise.dtype) * random_noise_shift_base
+            else:
+                random_noise_shift = random_noise_shift_base
             noise_shift = torch.randn(
                 batch_size,
                 latents.shape[1],
@@ -568,14 +586,22 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
                 1,
                 device=noise.device,
                 dtype=noise.dtype,
-            ) * args.random_noise_shift
+            ) * random_noise_shift
             noise = noise + noise_shift
 
-        if args.random_noise_multiplier > 0.0:
+        if random_noise_multiplier_base > 0.0:
+            if args.random_noise_multiplier_random_strength:
+                random_noise_multiplier = torch.rand(1, device=noise.device, dtype=noise.dtype) * random_noise_multiplier_base
+            else:
+                random_noise_multiplier = random_noise_multiplier_base
             noise_multiplier = torch.exp(
-                torch.randn(batch_size, 1, 1, 1, device=noise.device, dtype=noise.dtype) * args.random_noise_multiplier
+                torch.randn(batch_size, 1, 1, 1, device=noise.device, dtype=noise.dtype) * random_noise_multiplier
             )
             noise = noise * noise_multiplier
+
+        if is_train:
+            self._random_noise_shift_current = self._random_noise_shift_current * args.random_noise_shift_decay
+            self._random_noise_multiplier_current = self._random_noise_multiplier_current * args.random_noise_multiplier_decay
 
         # Get noisy model input and timesteps
         noisy_model_input, timesteps, sigmas = flux_train_utils.get_noisy_model_input_and_timesteps(
@@ -694,6 +720,10 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
         metadata["ss_discrete_flow_shift"] = args.discrete_flow_shift
         metadata["ss_random_noise_shift"] = args.random_noise_shift
         metadata["ss_random_noise_multiplier"] = args.random_noise_multiplier
+        metadata["ss_random_noise_shift_random_strength"] = args.random_noise_shift_random_strength
+        metadata["ss_random_noise_multiplier_random_strength"] = args.random_noise_multiplier_random_strength
+        metadata["ss_random_noise_shift_decay"] = args.random_noise_shift_decay
+        metadata["ss_random_noise_multiplier_decay"] = args.random_noise_multiplier_decay
 
     def is_text_encoder_not_needed_for_training(self, args):
         return args.cache_text_encoder_outputs and not self.is_train_text_encoder(args)
@@ -742,6 +772,28 @@ def setup_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.0,
         help="stddev of log-normal random noise multiplier (disabled when 0.0)",
+    )
+    parser.add_argument(
+        "--random_noise_shift_random_strength",
+        action="store_true",
+        help="use random strength between 0~random_noise_shift for random noise shift",
+    )
+    parser.add_argument(
+        "--random_noise_multiplier_random_strength",
+        action="store_true",
+        help="use random strength between 0~random_noise_multiplier for random noise multiplier",
+    )
+    parser.add_argument(
+        "--random_noise_shift_decay",
+        type=float,
+        default=1.0,
+        help="decay factor for random_noise_shift applied every training step (0.0-1.0)",
+    )
+    parser.add_argument(
+        "--random_noise_multiplier_decay",
+        type=float,
+        default=1.0,
+        help="decay factor for random_noise_multiplier applied every training step (0.0-1.0)",
     )
     # parser.add_argument("--fp8_scaled", action="store_true", help="Use scaled fp8 for DiT / DiTにスケーリングされたfp8を使う")
     parser.add_argument(
