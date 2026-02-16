@@ -51,6 +51,7 @@ timestep_sampling = 'sigmoid'
 discrete_flow_shift = 1
 noise_selection = 'knn'
 knn_noise_k = 8
+ip_noise_gamma = 0.1
 random_noise_shift = 0
 random_noise_multiplier = 0
 random_noise_shift_random_strength = false
