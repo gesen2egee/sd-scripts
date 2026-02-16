@@ -55,6 +55,8 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
             raise ValueError("random_noise_shift_decay must be between 0.0 and 1.0")
         if args.random_noise_multiplier_decay < 0.0 or args.random_noise_multiplier_decay > 1.0:
             raise ValueError("random_noise_multiplier_decay must be between 0.0 and 1.0")
+        if args.knn_noise_k < 1:
+            raise ValueError("knn_noise_k must be greater than or equal to 1")
 
         if args.fp8_base or args.fp8_base_unet:
             logger.warning("fp8_base and fp8_base_unet are not supported. / fp8_baseとfp8_base_unetはサポートされていません。")
@@ -563,7 +565,7 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
         # Sample noise
         if latents.ndim == 5:  # Fallback for 5D latents (old cache)
             latents = latents.squeeze(2)  # [B, C, 1, H, W] -> [B, C, H, W]
-        noise = torch.randn_like(latents)
+        noise = train_util.sample_training_noise(args, latents)
         batch_size = latents.shape[0]
 
         if self._random_noise_shift_current is None:
@@ -718,6 +720,8 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
         metadata["ss_timestep_sampling"] = args.timestep_sampling
         metadata["ss_sigmoid_scale"] = args.sigmoid_scale
         metadata["ss_discrete_flow_shift"] = args.discrete_flow_shift
+        metadata["ss_noise_selection"] = args.noise_selection
+        metadata["ss_knn_noise_k"] = args.knn_noise_k
         metadata["ss_random_noise_shift"] = args.random_noise_shift
         metadata["ss_random_noise_multiplier"] = args.random_noise_multiplier
         metadata["ss_random_noise_shift_random_strength"] = args.random_noise_shift_random_strength

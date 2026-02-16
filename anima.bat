@@ -49,10 +49,13 @@ exit /b 0
 
 :run_all
 
-call :run_profile "E:\NE\20_miss valentine" "miss valentine anima"
-if errorlevel 1 exit /b 1
+::call :run_profile "D:\SDXL\ai-toolkit\datasets\1_wang yu wen" "wang yu wen anima"
+::if errorlevel 1 exit /b 1
 
 call :run_profile "D:\SDXL\ai-toolkit\datasets\hong jin youn" "hong jin youn anima"
+if errorlevel 1 exit /b 1
+
+call :run_profile "E:\NE\20_miss valentine" "miss valentine anima"
 if errorlevel 1 exit /b 1
 
 call :run_profile "G:\sera\100_{sera}" "sera anima"
@@ -61,6 +64,8 @@ if errorlevel 1 exit /b 1
 call :run_profile "E:\hypno2\100_{mind control} {before and after}" "mind control before and after anima"
 if errorlevel 1 exit /b 1
 
+call :run_profile "D:\SDXL\ai-toolkit\datasets\loli" "loli anima"
+if errorlevel 1 exit /b 1
 
 exit /b 0
 
