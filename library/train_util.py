@@ -4071,17 +4071,10 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         help="enable noise offset with this value (if enabled, around 0.1 is recommended) / Noise offsetを有効にしてこの値を設定する（有効にする場合は0.1程度を推奨）",
     )
     parser.add_argument(
-        "--noise_selection",
-        type=str,
-        default="gaussian",
-        choices=["gaussian", "knn"],
-        help="noise sampling method for training latents (gaussian or knn) / 学習時のlatentノイズサンプリング方式（gaussianまたはknn）",
-    )
-    parser.add_argument(
         "--knn_noise_k",
         type=int,
-        default=8,
-        help="number of Gaussian candidates for knn noise selection (used when --noise_selection=knn) / knnノイズ選択時の候補数（--noise_selection=knnで使用）",
+        default=0,
+        help="number of Gaussian candidates for knn noise selection (0 disables KNN and uses Gaussian noise) / knnノイズ選択時の候補数（0でKNN無効、通常のGaussianノイズを使用）",
     )
     parser.add_argument(
         "--noise_offset_random_strength",
@@ -4440,8 +4433,8 @@ def verify_training_args(args: argparse.Namespace):
             "cache_latents_to_disk is enabled, so cache_latents is also enabled / cache_latents_to_diskが有効なため、cache_latentsを有効にします"
         )
 
-    if args.knn_noise_k < 1:
-        raise ValueError("knn_noise_k must be greater than or equal to 1 / knn_noise_kは1以上である必要があります")
+    if args.knn_noise_k < 0:
+        raise ValueError("knn_noise_k must be greater than or equal to 0 / knn_noise_kは0以上である必要があります")
 
     # noise_offset, perlin_noise, multires_noise_iterations cannot be enabled at the same time
     # # Listを使って数えてもいいけど並べてしまえ
@@ -6084,12 +6077,17 @@ def get_timesteps(min_timestep: int, max_timestep: int, b_size: int, device: tor
     return timesteps
 
 
-def sample_knn_noise(latents: torch.FloatTensor, k: int) -> torch.FloatTensor:
-    if k < 1:
-        raise ValueError("k must be greater than or equal to 1")
+def select_nearest_noise_candidate(latents: torch.FloatTensor, candidates: torch.FloatTensor) -> torch.FloatTensor:
+    if candidates.ndim != latents.ndim + 1:
+        raise ValueError("candidates must have one additional K dimension compared to latents")
 
     batch_size = latents.shape[0]
-    candidates = torch.randn((batch_size, k, *latents.shape[1:]), device=latents.device, dtype=latents.dtype)
+    if candidates.shape[0] != batch_size:
+        raise ValueError("candidates batch size must match latents batch size")
+
+    k = candidates.shape[1]
+    if k < 1:
+        raise ValueError("candidates K dimension must be greater than or equal to 1")
     if k == 1:
         return candidates[:, 0]
 
@@ -6103,14 +6101,22 @@ def sample_knn_noise(latents: torch.FloatTensor, k: int) -> torch.FloatTensor:
     return candidates[row, min_index]
 
 
+def sample_knn_noise(latents: torch.FloatTensor, k: int) -> torch.FloatTensor:
+    if k < 1:
+        raise ValueError("k must be greater than or equal to 1")
+
+    batch_size = latents.shape[0]
+    candidates = torch.randn((batch_size, k, *latents.shape[1:]), device=latents.device, dtype=latents.dtype)
+    return select_nearest_noise_candidate(latents, candidates)
+
+
 def sample_training_noise(args: argparse.Namespace, latents: torch.FloatTensor) -> torch.FloatTensor:
-    noise_selection = getattr(args, "noise_selection", "gaussian")
-    if noise_selection == "gaussian":
-        return torch.randn_like(latents, device=latents.device)
-    if noise_selection == "knn":
-        knn_noise_k = getattr(args, "knn_noise_k", 8)
+    knn_noise_k = int(getattr(args, "knn_noise_k", 0))
+    if knn_noise_k < 0:
+        raise ValueError("knn_noise_k must be greater than or equal to 0")
+    if knn_noise_k > 0:
         return sample_knn_noise(latents, knn_noise_k)
-    raise ValueError(f"Unknown noise selection method: {noise_selection}")
+    return torch.randn_like(latents, device=latents.device)
 
 
 def get_noise_noisy_latents_and_timesteps(

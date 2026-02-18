@@ -104,8 +104,7 @@ def _run_and_capture_noise(monkeypatch, args, latents, trainer=None, is_train=Tr
 
 def test_parser_default_values_for_random_noise_args():
     _, args = _parse_default_args()
-    assert args.noise_selection == "gaussian"
-    assert args.knn_noise_k == 8
+    assert args.knn_noise_k == 0
     assert args.random_noise_shift == 0.0
     assert args.random_noise_multiplier == 0.0
     assert args.random_noise_shift_random_strength is False
@@ -123,8 +122,6 @@ def test_parser_can_parse_random_noise_args_from_cli():
                 "0.1",
                 "--random_noise_multiplier",
                 "0.2",
-                "--noise_selection",
-                "knn",
                 "--knn_noise_k",
                 "16",
                 "--random_noise_shift_random_strength",
@@ -135,7 +132,6 @@ def test_parser_can_parse_random_noise_args_from_cli():
                 "0.98",
             ]
         )
-    assert args.noise_selection == "knn"
     assert args.knn_noise_k == 16
     assert args.random_noise_shift == 0.1
     assert args.random_noise_multiplier == 0.2
@@ -151,7 +147,6 @@ def test_config_file_can_set_random_noise_args(tmp_path: Path):
         "\n".join(
             [
                 "[anima]",
-                "noise_selection = 'knn'",
                 "knn_noise_k = 12",
                 "random_noise_shift = 0.1",
                 "random_noise_multiplier = 0.2",
@@ -170,7 +165,6 @@ def test_config_file_can_set_random_noise_args(tmp_path: Path):
     with patch("sys.argv", ["", "--config_file", str(config_path)]):
         args = train_util.read_config_from_file(args, parser)
 
-    assert args.noise_selection == "knn"
     assert args.knn_noise_k == 12
     assert args.random_noise_shift == 0.1
     assert args.random_noise_multiplier == 0.2
@@ -205,7 +199,7 @@ def test_assert_extra_args_rejects_negative_values():
         trainer.assert_extra_args(args, dataset, None)
 
     args.random_noise_multiplier_decay = 1.0
-    args.knn_noise_k = 0
+    args.knn_noise_k = -1
     with pytest.raises(ValueError, match="knn_noise_k"):
         trainer.assert_extra_args(args, dataset, None)
 
@@ -214,7 +208,6 @@ def test_noise_augmentation_changes_noise_and_preserves_shape_dtype_device(monke
     _, args = _parse_default_args()
     args.gradient_checkpointing = False
     args.weighting_scheme = "none"
-    args.noise_selection = "gaussian"
 
     latents = torch.randn(2, 4, 8, 8, dtype=torch.float32)
 
@@ -251,7 +244,6 @@ def test_knn_noise_selection_preserves_shape_dtype_device(monkeypatch):
     _, args = _parse_default_args()
     args.gradient_checkpointing = False
     args.weighting_scheme = "none"
-    args.noise_selection = "knn"
     args.knn_noise_k = 4
     args.random_noise_shift = 0.0
     args.random_noise_multiplier = 0.0
@@ -264,28 +256,48 @@ def test_knn_noise_selection_preserves_shape_dtype_device(monkeypatch):
     assert noise.device == latents.device
 
 
-def test_knn_noise_applies_before_random_noise_augmentation(monkeypatch):
+def test_knn_noise_uses_shared_shift_across_k_candidates(monkeypatch):
     _, args = _parse_default_args()
     args.gradient_checkpointing = False
     args.weighting_scheme = "none"
-    args.noise_selection = "knn"
-    args.knn_noise_k = 8
+    args.knn_noise_k = 4
     args.random_noise_shift = 0.5
     args.random_noise_multiplier = 0.0
     args.random_noise_shift_random_strength = False
     args.random_noise_multiplier_random_strength = False
 
     latents = torch.randn(2, 4, 8, 8, dtype=torch.float32)
+    batch_size, channels, height, width = latents.shape
+    captured = {}
 
-    def fake_sample_training_noise(args, latents):
-        return torch.zeros_like(latents)
+    def fake_select_nearest_noise_candidate(latents, candidates):
+        captured["candidates"] = candidates.detach().clone()
+        return candidates[:, 0]
 
-    monkeypatch.setattr(anima_train_network.train_util, "sample_training_noise", fake_sample_training_noise)
-    torch.manual_seed(7)
+    real_randn = torch.randn
+
+    def fake_randn(*shape, **kwargs):
+        size = shape[0] if len(shape) == 1 and isinstance(shape[0], tuple) else shape
+        size = tuple(size)
+        if size == (batch_size, args.knn_noise_k, channels, height, width):
+            return torch.zeros(size, device=kwargs.get("device"), dtype=kwargs.get("dtype"))
+        if size == (batch_size, channels, 1, 1):
+            # deterministic non-zero shift to validate shared broadcast across K candidates
+            return torch.tensor(
+                [[[[1.0]], [[2.0]], [[3.0]], [[4.0]]], [[[5.0]], [[6.0]], [[7.0]], [[8.0]]]],
+                device=kwargs.get("device"),
+                dtype=kwargs.get("dtype"),
+            )
+        return real_randn(*shape, **kwargs)
+
+    monkeypatch.setattr(anima_train_network.train_util, "select_nearest_noise_candidate", fake_select_nearest_noise_candidate)
+    monkeypatch.setattr(anima_train_network.torch, "randn", fake_randn)
     noise = _run_and_capture_noise(monkeypatch, args, latents)
 
-    # If augmentation were applied before KNN selection, this could be all zeros due to replacement.
-    assert not torch.allclose(noise, torch.zeros_like(noise))
+    candidates = captured["candidates"]
+    # All K candidates should share the same shift/multiplier for each sample.
+    assert torch.allclose(candidates, candidates[:, :1].expand_as(candidates))
+    assert torch.allclose(noise, candidates[:, 0])
 
 
 def test_random_strength_flags_change_noise(monkeypatch):

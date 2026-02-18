@@ -28,7 +28,7 @@ def _build_verify_args(**overrides):
         clip_skip=None,
         cache_latents_to_disk=False,
         cache_latents=False,
-        knn_noise_k=8,
+        knn_noise_k=0,
         adaptive_noise_scale=None,
         noise_offset=None,
         scale_v_pred_loss_like_noise_pred=False,
@@ -73,7 +73,7 @@ def test_sample_knn_noise_rejects_invalid_k():
 
 
 def test_verify_training_args_rejects_invalid_knn_noise_k():
-    args = _build_verify_args(knn_noise_k=0)
+    args = _build_verify_args(knn_noise_k=-1)
     with pytest.raises(ValueError, match="knn_noise_k"):
         train_util.verify_training_args(args)
 
@@ -93,7 +93,6 @@ def test_get_noise_noisy_latents_and_timesteps_uses_knn_selection(monkeypatch):
     scheduler = DummyScheduler()
 
     args = argparse.Namespace(
-        noise_selection="knn",
         knn_noise_k=8,
         noise_offset=None,
         noise_offset_random_strength=False,
@@ -109,7 +108,7 @@ def test_get_noise_noisy_latents_and_timesteps_uses_knn_selection(monkeypatch):
     called = {"knn": False}
 
     def fake_sample_training_noise(args, latents):
-        if args.noise_selection == "knn":
+        if args.knn_noise_k > 0:
             called["knn"] = True
         return expected_noise
 

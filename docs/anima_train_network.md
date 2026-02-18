@@ -184,10 +184,8 @@ Besides the arguments explained in the [train_network.py guide](train_network.md
   - Shift for the timestep distribution in Rectified Flow training. Default `1.0`. This value is used when `--timestep_sampling` is set to **`shift`**. The shift formula is `t_shifted = (t * shift) / (1 + (shift - 1) * t)`.
 * `--sigmoid_scale=<float>`
   - Scale factor when `--timestep_sampling` is set to `sigmoid`, `shift`, or `flux_shift`. Default `1.0`.
-* `--noise_selection=<choice>`
-  - Noise sampling method for training latents. Choose from `gaussian` (default) or `knn`. With `knn`, each sample draws `k` Gaussian candidates and selects the nearest one in flattened latent space.
 * `--knn_noise_k=<integer>`
-  - Number of Gaussian candidates for KNN noise selection. Default `8`. Only used when `--noise_selection=knn`.
+  - Number of Gaussian candidates for KNN noise selection. Default `0` (disabled). If `knn_noise_k > 0`, each sample draws `k` Gaussian candidates and selects the nearest one in flattened latent space. If `0`, standard Gaussian noise is used.
 * `--random_noise_shift=<float>`
   - Standard deviation for per-sample, per-channel random noise shift. This adds `N(0, random_noise_shift)` with shape `(B, C, 1, 1)` to the sampled noise. Default `0.0` (disabled).
 * `--random_noise_multiplier=<float>`
@@ -600,10 +598,13 @@ Qwen3に個別の学習率を指定するには`--text_encoder_lr`を使用し�
 
 - **`--ip_noise_gamma`**, **`--ip_noise_gamma_random_strength`**: Input Perturbation noise gamma values.
 
-- **`--noise_selection`**, **`--knn_noise_k`**: Noise source selection before other noise augmentations.
-  - `noise_selection`: `gaussian` (default) or `knn`.
-  - `knn_noise_k`: Candidate count used by KNN.
-  - Order: KNN/gaussian base noise is sampled first, then `random_noise_shift`/`random_noise_multiplier` are applied.
+- **`--knn_noise_k`**: Noise source selection before other noise augmentations.
+  - `knn_noise_k=0` (default): standard Gaussian base noise.
+  - `knn_noise_k>0`: KNN base noise with `k` candidates.
+  - When `knn_noise_k>0` and random noise shift/multiplier are enabled, one shared shift/multiplier is sampled per image and applied to all `k` candidates before distance comparison.
+  - Order:
+    - `knn_noise_k=0`: sample Gaussian base noise, then apply `random_noise_shift`/`random_noise_multiplier`.
+    - `knn_noise_k>0`: sample K candidates, apply shared `random_noise_shift`/`random_noise_multiplier` across K, then select nearest candidate.
 
 - **`--random_noise_shift`**, **`--random_noise_multiplier`**: Extra noise augmentation for sampled training noise.
   - `random_noise_shift`: Adds per-sample, per-channel Gaussian shift.
@@ -676,7 +677,6 @@ The following metadata is saved in the LoRA model file:
 * `ss_timestep_sampling`
 * `ss_sigmoid_scale`
 * `ss_discrete_flow_shift`
-* `ss_noise_selection`
 * `ss_knn_noise_k`
 
 <details>
@@ -695,7 +695,6 @@ The following metadata is saved in the LoRA model file:
 * `ss_timestep_sampling`
 * `ss_sigmoid_scale`
 * `ss_discrete_flow_shift`
-* `ss_noise_selection`
 * `ss_knn_noise_k`
 
 </details>
