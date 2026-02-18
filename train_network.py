@@ -4,7 +4,7 @@ import argparse
 import math
 import os
 import typing
-from typing import Any, List, Union, Optional
+from typing import Any, List, Tuple, Union, Optional
 import sys
 import random
 import time
@@ -25,7 +25,7 @@ from accelerate.utils import set_seed
 from accelerate import Accelerator
 from diffusers import DDPMScheduler
 from diffusers.models.autoencoders.autoencoder_kl import AutoencoderKL
-from library import deepspeed_utils, model_util, sai_model_spec, strategy_base, strategy_sd, sai_model_spec
+from library import cwmi_loss, deepspeed_utils, model_util, sai_model_spec, strategy_base, strategy_sd, sai_model_spec
 
 import library.train_util as train_util
 from library.train_util import DreamBoothDataset
@@ -57,6 +57,9 @@ class NetworkTrainer:
     def __init__(self):
         self.vae_scale_factor = 0.18215
         self.is_sdxl = False
+        self._cwmi_loss_module: Optional[cwmi_loss.CWMILoss] = None
+        self._cwmi_loss_config: Optional[Tuple[int, int, float]] = None
+        self._cwmi_warned_small_latent = False
 
     # TODO 他のスクリプトと共通化する
     def generate_step_logs(
@@ -341,6 +344,21 @@ class NetworkTrainer:
             loss = apply_debiased_estimation(loss, timesteps, noise_scheduler, args.v_parameterization)
         return loss
 
+    def _get_cwmi_loss_module(self, args: argparse.Namespace) -> cwmi_loss.CWMILoss:
+        config = (
+            int(getattr(args, "cwmi_levels", 4)),
+            int(getattr(args, "cwmi_orientations", 4)),
+            float(getattr(args, "cwmi_eps", 5e-4)),
+        )
+        if self._cwmi_loss_module is None or self._cwmi_loss_config != config:
+            self._cwmi_loss_module = cwmi_loss.CWMILoss(
+                levels=config[0],
+                orientations=config[1],
+                eps=config[2],
+            )
+            self._cwmi_loss_config = config
+        return self._cwmi_loss_module
+
     def get_sai_model_spec(self, args):
         return train_util.get_sai_model_spec(None, args, self.is_sdxl, True, False)
 
@@ -467,13 +485,41 @@ class NetworkTrainer:
             is_train=is_train,
         )
 
-        huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler)
-        loss = train_util.conditional_loss(noise_pred.float(), target.float(), args.loss_type, "none", huber_c)
-        if weighting is not None:
-            loss = loss * weighting
-        if args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None):
-            loss = apply_masked_loss(loss, batch)
-        loss = loss.mean(dim=list(range(1, loss.ndim)))  # mean over all dims except batch
+        use_masked_loss = args.masked_loss or ("alpha_masks" in batch and batch["alpha_masks"] is not None)
+
+        if args.loss_type == "cwmi":
+            l2_loss = train_util.conditional_loss(noise_pred.float(), target.float(), "l2", "none", None)
+            if weighting is not None:
+                l2_loss = l2_loss * weighting
+            if use_masked_loss:
+                l2_loss = apply_masked_loss(l2_loss, batch)
+            l2_loss = l2_loss.mean(dim=list(range(1, l2_loss.ndim)))  # mean over all dims except batch
+
+            cwmi_pred = noise_pred.float()
+            cwmi_target = target.float()
+            if use_masked_loss:
+                cwmi_pred = apply_masked_loss(cwmi_pred, batch)
+                cwmi_target = apply_masked_loss(cwmi_target, batch)
+
+            if min(cwmi_pred.shape[-2:]) < 2:
+                if not self._cwmi_warned_small_latent:
+                    logger.warning("CWMI is disabled for latent spatial size < 2; falling back to L2 for this batch.")
+                    self._cwmi_warned_small_latent = True
+                cwmi_loss_sample = l2_loss
+            else:
+                cwmi_loss_module = self._get_cwmi_loss_module(args)
+                cwmi_loss_sample = cwmi_loss_module(cwmi_target, cwmi_pred)
+
+            cwmi_lambda = float(getattr(args, "cwmi_lambda", 0.1))
+            loss = (1.0 - cwmi_lambda) * cwmi_loss_sample + cwmi_lambda * l2_loss
+        else:
+            huber_c = train_util.get_huber_threshold_if_needed(args, timesteps, noise_scheduler)
+            loss = train_util.conditional_loss(noise_pred.float(), target.float(), args.loss_type, "none", huber_c)
+            if weighting is not None:
+                loss = loss * weighting
+            if use_masked_loss:
+                loss = apply_masked_loss(loss, batch)
+            loss = loss.mean(dim=list(range(1, loss.ndim)))  # mean over all dims except batch
 
         loss_weights = batch["loss_weights"]  # 各sampleごとのweight
         loss = loss * loss_weights
@@ -1058,6 +1104,10 @@ class NetworkTrainer:
             "ss_huber_schedule": args.huber_schedule,
             "ss_huber_scale": args.huber_scale,
             "ss_huber_c": args.huber_c,
+            "ss_cwmi_lambda": getattr(args, "cwmi_lambda", 0.1),
+            "ss_cwmi_levels": getattr(args, "cwmi_levels", 4),
+            "ss_cwmi_orientations": getattr(args, "cwmi_orientations", 4),
+            "ss_cwmi_eps": getattr(args, "cwmi_eps", 5e-4),
             "ss_fp8_base": bool(args.fp8_base),
             "ss_fp8_base_unet": bool(args.fp8_base_unet),
             "ss_validation_seed": args.validation_seed,

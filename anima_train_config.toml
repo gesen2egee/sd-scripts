@@ -27,6 +27,11 @@ network_train_unet_only = true
 learning_rate = 1
 text_encoder_lr = 0.0
 llm_adapter_lr = 0.0
+loss_type = 'cwmi'
+cwmi_lambda = 0.1
+cwmi_levels = 4
+cwmi_orientations = 4
+cwmi_eps = 5e-4
 optimizer_type = 'adv_optm.Prodigy_adv'
 optimizer_args = ['d0=1e-5', 'weight_decay=0.1', 'cautious_wd=True','kourkoutas_beta=True', 'k_warmup_steps=300', "compiled_optimizer=False", "Simplified_AdEMAMix=True"]
 lr_scheduler = 'cosine'
@@ -45,7 +50,7 @@ cache_latents = true
 cache_text_encoder_outputs = true
 
 [anima]
-timestep_sampling = 'flux_shift'
+timestep_sampling = 'sigmoid'
 discrete_flow_shift = 1
 ip_noise_gamma = 0.1
 qwen3_max_token_length = 512
