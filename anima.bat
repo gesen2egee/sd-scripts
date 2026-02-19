@@ -49,8 +49,8 @@ exit /b 0
 
 :run_all
 
-call :run_profile "E:\NE\20_miss valentine" "miss valentine anima"
-if errorlevel 1 exit /b 1
+::call :run_profile "E:\NE\20_miss valentine" "miss valentine anima"
+::if errorlevel 1 exit /b 1
 
 call :run_profile "D:\SDXL\ai-toolkit\datasets\1_wang yu wen" "wang yu wen anima"
 if errorlevel 1 exit /b 1

@@ -33,12 +33,12 @@ cwmi_levels = 4
 cwmi_orientations = 4
 cwmi_eps = 5e-4
 optimizer_type = 'adv_optm.Prodigy_adv'
-optimizer_args = ['d0=1e-5', 'weight_decay=0.1', 'cautious_wd=True','kourkoutas_beta=True', 'k_warmup_steps=300', "compiled_optimizer=False", "Simplified_AdEMAMix=True"]
+optimizer_args = ['d0=1e-5', 'weight_decay=0.1', 'cautious_wd=True','kourkoutas_beta=True', 'k_warmup_steps=300', "compiled_optimizer=False", "use_magma=True"]
 lr_scheduler = 'cosine'
 lr_warmup_steps = 100
 train_batch_size = 1
 max_grad_norm = 1.0
-max_train_steps = 3000
+max_train_steps = 2000
 max_data_loader_n_workers = 2
 persistent_data_loader_workers = true
 
@@ -51,6 +51,8 @@ cache_text_encoder_outputs = true
 
 [anima]
 timestep_sampling = 'sigmoid'
+noise_selection = 'knn'
+knn_noise_k = 8
 discrete_flow_shift = 1
 ip_noise_gamma = 0.1
 qwen3_max_token_length = 512

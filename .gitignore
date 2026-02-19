@@ -26,3 +26,6 @@ MagicMock
 !/temp/tmp/
 !/temp/tmp/.gitkeep
 
+modules/util/enum/LossPreset.py
+__anima_dataset_runtime.toml
+anima.bat
