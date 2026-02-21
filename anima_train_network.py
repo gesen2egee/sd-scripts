@@ -240,6 +240,35 @@ class AnimaNetworkTrainer(train_network.NetworkTrainer):
         if not train_llm_adapter:
             exclude_patterns.append(r".*llm_adapter.*")
 
+        # Automatically drop modules if their explicit LR is set to 0
+        if getattr(args, "self_attn_lr", None) == 0.0:
+            exclude_patterns.append(r".*\.self_attn.*")
+        if getattr(args, "cross_attn_lr", None) == 0.0:
+            exclude_patterns.append(r".*\.cross_attn.*")
+        if getattr(args, "mlp_lr", None) == 0.0:
+            exclude_patterns.append(r".*\.mlp.*")
+        if getattr(args, "mod_lr", None) == 0.0:
+            exclude_patterns.append(r".*\.adaln_modulation.*")
+
+        # Automatically inject network_reg_lrs for non-zero explicitly set LRs
+        auto_reg_lrs = []
+        if getattr(args, "self_attn_lr", None) is not None and args.self_attn_lr > 0:
+            auto_reg_lrs.append(f".*\\.self_attn.*={args.self_attn_lr}")
+        if getattr(args, "cross_attn_lr", None) is not None and args.cross_attn_lr > 0:
+            auto_reg_lrs.append(f".*\\.cross_attn.*={args.cross_attn_lr}")
+        if getattr(args, "mlp_lr", None) is not None and args.mlp_lr > 0:
+            auto_reg_lrs.append(f".*\\.mlp.*={args.mlp_lr}")
+        if getattr(args, "mod_lr", None) is not None and args.mod_lr > 0:
+            auto_reg_lrs.append(f".*\\.adaln_modulation.*={args.mod_lr}")
+
+        if auto_reg_lrs:
+            existing_reg_lrs = net_kwargs.get("network_reg_lrs", "").strip()
+            if existing_reg_lrs:
+                net_kwargs["network_reg_lrs"] = existing_reg_lrs + "," + ",".join(auto_reg_lrs)
+            else:
+                net_kwargs["network_reg_lrs"] = ",".join(auto_reg_lrs)
+
+
         exclude_re = compile_patterns(exclude_patterns, "exclude_patterns")
         include_re = compile_patterns(include_patterns, "include_patterns")
 

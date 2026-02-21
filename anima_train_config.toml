@@ -21,11 +21,14 @@ save_every_n_steps = 250
 network_module = 'lycoris.kohya'
 network_args = ["algo=lokr", "factor=10", "full_matrix=True"]
 network_train_unet_only = true
+
 # Keep minimal LoRA targets first for stability.
 
 [train]
-learning_rate = 1
-text_encoder_lr = 0.0
+self_attn_lr = 0.0
+cross_attn_lr = 0.0
+mlp_lr = 1.0
+mod_lr = 0.0
 llm_adapter_lr = 0.0
 loss_type = 'cwmi'
 cwmi_lambda = 0.1
@@ -33,7 +36,7 @@ cwmi_levels = 4
 cwmi_orientations = 4
 cwmi_eps = 5e-4
 optimizer_type = 'adv_optm.Prodigy_adv'
-optimizer_args = ['d0=1e-5', 'weight_decay=0.1', 'cautious_wd=True','kourkoutas_beta=True', 'k_warmup_steps=300', "compiled_optimizer=False", "Simplified_AdEMAMix=True"]
+optimizer_args = ['d0=1e-4', 'weight_decay=0.1', 'cautious_wd=True','kourkoutas_beta=True', 'k_warmup_steps=300', "compiled_optimizer=False", "Simplified_AdEMAMix=True", "use_magma=True"]
 lr_scheduler = 'cosine'
 lr_warmup_steps = 100
 train_batch_size = 1
@@ -52,6 +55,7 @@ cache_text_encoder_outputs = true
 [anima]
 timestep_sampling = 'sigmoid'
 discrete_flow_shift = 1
-ip_noise_gamma = 0.1
+cep_noise_type = 'uniform'
+cep_gamma = 1.0
 qwen3_max_token_length = 512
 t5_max_token_length = 512
