@@ -474,11 +474,19 @@ def get_noisy_model_input_and_timesteps(
     bsz, h, w = latents.shape[0], latents.shape[-2], latents.shape[-1]
     assert bsz > 0, "Batch size not large enough"
     num_timesteps = noise_scheduler.config.num_train_timesteps
-    if args.timestep_sampling == "uniform" or args.timestep_sampling == "sigmoid":
+    if args.timestep_sampling == "uniform" or args.timestep_sampling == "sigmoid" or args.timestep_sampling == "plora":
         # Simple random sigma-based noise sampling
         if args.timestep_sampling == "sigmoid":
             # https://github.com/XLabs-AI/x-flux/tree/main
             sigmas = torch.sigmoid(args.sigmoid_scale * torch.randn((bsz,), device=device))
+        elif args.timestep_sampling == "plora":
+            alpha = getattr(args, "p_lora_alpha", 1.0)
+            bias = getattr(args, "p_lora_bias", "left")
+            u = torch.rand((bsz,), device=device)
+            if bias == "left":
+                sigmas = 1.0 - torch.pow(u, 1.0 / (alpha + 1.0))
+            else:
+                sigmas = torch.pow(u, 1.0 / (alpha + 1.0))
         else:
             sigmas = torch.rand((bsz,), device=device)
 

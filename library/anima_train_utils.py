@@ -101,8 +101,21 @@ def add_anima_training_arguments(parser: argparse.ArgumentParser):
         "--timestep_sampling",
         type=str,
         default="sigmoid",
-        choices=["sigma", "uniform", "sigmoid", "shift", "flux_shift"],
+        choices=["sigma", "uniform", "sigmoid", "shift", "flux_shift", "plora"],
         help="Timestep sampling method (default: sigmoid (logit normal))",
+    )
+    parser.add_argument(
+        "--p_lora_bias",
+        type=str,
+        default="left",
+        choices=["left", "right"],
+        help="P-LoRA sampling bias direction ('left' for low-noise, 'right' for high-noise) (default: left)",
+    )
+    parser.add_argument(
+        "--p_lora_alpha",
+        type=float,
+        default=1.0,
+        help="P-LoRA bias strength alpha (default: 1.0)",
     )
     parser.add_argument(
         "--sigmoid_scale",
@@ -140,21 +153,79 @@ def add_anima_training_arguments(parser: argparse.ArgumentParser):
 # Loss weighting
 
 
-def compute_loss_weighting_for_anima(weighting_scheme: str, sigmas: torch.Tensor) -> torch.Tensor:
-    """Compute loss weighting for Anima training.
-
-    Same schemes as SD3 but can add Anima-specific ones if needed in future.
-    """
+def compute_loss_weighting_for_anima(weighting_scheme: str, sigmas: torch.Tensor, args: Optional[argparse.Namespace] = None) -> torch.Tensor:
+    """Compute loss weighting for Anima training."""
+    sigmas_device = sigmas.device
+    
+    # 判斷是否為新新增的三種通用重量平衡 scheme 之一
+    if weighting_scheme in ["plora", "plora_sigmoid", "plora_sigmoid_1_3"]:
+        if args is None:
+            return torch.ones_like(sigmas)
+            
+        sampling = getattr(args, "timestep_sampling", "sigmoid")
+        sigmas_f = sigmas.float()
+        
+        # 安全邊界截斷，避免 logit 計算中的 log(0) 或是除以零
+        eps = 1e-6
+        sigmas_clipped = torch.clamp(sigmas_f, min=eps, max=1.0 - eps)
+        l = torch.log(sigmas_clipped / (1.0 - sigmas_clipped))
+        
+        # 1. 計算提案分佈的機率密度 q(sigmas)
+        if sampling == "plora":
+            alpha = getattr(args, "p_lora_alpha", 1.0)
+            bias = getattr(args, "p_lora_bias", "left")
+            if bias == "left":
+                q_t = (alpha + 1.0) * ((1.0 - sigmas_clipped) ** alpha)
+            else:
+                q_t = (alpha + 1.0) * (sigmas_clipped ** alpha)
+        elif sampling == "sigmoid":
+            S_a = getattr(args, "sigmoid_scale", 1.0)
+            # 原始 PDF
+            q_t = 1.0 / (S_a * math.sqrt(2 * math.pi) * sigmas_clipped * (1.0 - sigmas_clipped)) * torch.exp(- (l ** 2) / (2 * S_a ** 2))
+        elif sampling == "shift":
+            S_a = getattr(args, "sigmoid_scale", 1.0)
+            F = getattr(args, "discrete_flow_shift", 1.0)
+            # 原始 PDF
+            q_t = 1.0 / (S_a * math.sqrt(2 * math.pi) * sigmas_clipped * (1.0 - sigmas_clipped)) * torch.exp(- ((l - math.log(F)) ** 2) / (2 * S_a ** 2))
+        else:
+            # uniform / none / sigma
+            q_t = torch.ones_like(sigmas_clipped)
+            
+        # 2. 計算目標分佈與重要性權重 w(sigmas)
+        if weighting_scheme == "plora":
+            # 目標分佈為均勻分佈 p_target = 1.0
+            w_t = 1.0 / (q_t + 1e-8)
+        else:
+            # plora_sigmoid (S_t = 1.0) 或是 plora_sigmoid_1_3 (S_t = 1.3)
+            S_t = 1.0 if weighting_scheme == "plora_sigmoid" else 1.3
+            
+            # 如果提案分佈也是 Logit-Normal (sigmoid 或 shift)，我們可以使用消去後的簡化公式以避免數值不穩定
+            if sampling in ["sigmoid", "shift"]:
+                S_a = getattr(args, "sigmoid_scale", 1.0)
+                mu_a = 0.0 if sampling == "sigmoid" else math.log(getattr(args, "discrete_flow_shift", 1.0))
+                
+                # 簡化公式：w(sigma) = (S_a / S_t) * exp( ((l - mu_a)^2)/(2*S_a^2) - l^2/(2*S_t^2) )
+                exponent = ((l - mu_a) ** 2) / (2 * S_a ** 2) - (l ** 2) / (2 * S_t ** 2)
+                w_t = (S_a / S_t) * torch.exp(exponent)
+            else:
+                # 無法消去時，使用原始 PDF 比值
+                p_t = 1.0 / (S_t * math.sqrt(2 * math.pi) * sigmas_clipped * (1.0 - sigmas_clipped)) * torch.exp(- (l ** 2) / (2 * S_t ** 2))
+                w_t = p_t / (q_t + 1e-8)
+                
+        # 3. 限制權重大小並返回
+        w_t = torch.clamp(w_t, max=10.0)
+        return w_t.to(device=sigmas_device, dtype=sigmas.dtype)
+        
+    # 原有的物理加權邏輯 (與採樣完全解耦)
     if weighting_scheme == "sigma_sqrt":
         weighting = (sigmas**-2.0).float()
     elif weighting_scheme == "cosmap":
         bot = 1 - 2 * sigmas + 2 * sigmas**2
         weighting = 2 / (math.pi * bot)
-    elif weighting_scheme == "none" or weighting_scheme is None:
-        weighting = torch.ones_like(sigmas)
     else:
         weighting = torch.ones_like(sigmas)
-    return weighting
+        
+    return weighting.to(device=sigmas_device)
 
 
 # Parameter groups (6 groups with separate LRs)

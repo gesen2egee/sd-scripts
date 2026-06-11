@@ -4404,7 +4404,7 @@ def add_dit_training_arguments(parser: argparse.ArgumentParser):
         "--weighting_scheme",
         type=str,
         default="uniform",
-        choices=["sigma_sqrt", "logit_normal", "mode", "cosmap", "none", "uniform"],
+        choices=["sigma_sqrt", "logit_normal", "mode", "cosmap", "none", "uniform", "plora", "plora_sigmoid", "plora_sigmoid_1_3"],
         help="weighting scheme for timestep distribution. Default is uniform, uniform and none are the same behavior"
         " / タイムステップ分布の重み付けスキーム、デフォルトはuniform、uniform と none は同じ挙動",
     )
