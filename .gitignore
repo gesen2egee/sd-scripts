@@ -23,6 +23,5 @@ tests/test_output_*/
 tests/downloaded_data/
 tests/mask_viz/
 
-# Tasks and temporary config files
+# Tasks and temporary config/test logs
 tasks/
-
