@@ -4187,6 +4187,18 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         help="enable noise offset with this value (if enabled, around 0.1 is recommended) / Noise offsetを有効にしてこの値を設定する（有効にする場合は0.1程度を推奨）",
     )
     parser.add_argument(
+        "--knn_noise_k",
+        type=int,
+        default=0,
+        help="number of Gaussian candidates for KNN noise selection (0 disables KNN and uses Gaussian noise) / KNNノイズ選択時の候補数（0でKNN無効、通常のGaussianノイズを使用）",
+    )
+    parser.add_argument(
+        "--immiscible_image_scale",
+        type=float,
+        default=1.0,
+        help="scale training latents before diffusion for immiscible image scaling (1.0 disables, paper suggests values like 2 or 4) / immiscible image scaling用にdiffusion前のlatentを倍率で拡大します（1.0で無効、論文では2や4など）",
+    )
+    parser.add_argument(
         "--noise_offset_random_strength",
         action="store_true",
         help="use random strength between 0~noise_offset for noise offset. / noise offsetにおいて、0からnoise_offsetの間でランダムな強度を使用します。",
@@ -4562,6 +4574,14 @@ def verify_training_args(args: argparse.Namespace):
             "Inpainting masks are generated randomly per step from the original image, "
             "so the image must be read on every step. "
             "Disable cache_latents (and cache_latents_to_disk) when using --train_inpainting."
+        )
+
+    if getattr(args, "knn_noise_k", 0) < 0:
+        raise ValueError("knn_noise_k must be greater than or equal to 0 / knn_noise_kは0以上である必要があります")
+
+    if getattr(args, "immiscible_image_scale", 1.0) < 1.0:
+        raise ValueError(
+            "immiscible_image_scale must be greater than or equal to 1.0 / immiscible_image_scaleは1.0以上である必要があります"
         )
 
     # noise_offset, perlin_noise, multires_noise_iterations cannot be enabled at the same time
@@ -6236,6 +6256,58 @@ def get_timesteps(min_timestep: int, max_timestep: int, b_size: int, device: tor
     return timesteps
 
 
+def select_nearest_noise_candidate(latents: torch.FloatTensor, candidates: torch.FloatTensor) -> torch.FloatTensor:
+    if candidates.ndim != latents.ndim + 1:
+        raise ValueError("candidates must have one additional K dimension compared to latents")
+
+    batch_size = latents.shape[0]
+    if candidates.shape[0] != batch_size:
+        raise ValueError("candidates batch size must match latents batch size")
+
+    k = candidates.shape[1]
+    if k < 1:
+        raise ValueError("candidates K dimension must be greater than or equal to 1")
+    if k == 1:
+        return candidates[:, 0]
+
+    latent_points = latents.flatten(start_dim=1).to(torch.float16)
+    candidate_points = candidates.flatten(start_dim=2).to(torch.float16)
+
+    distance_points = latent_points.unsqueeze(1) - candidate_points
+    distance = torch.linalg.vector_norm(distance_points, dim=2)
+    min_index = torch.argmin(distance, dim=1)
+    row = torch.arange(batch_size, device=latents.device)
+    return candidates[row, min_index]
+
+
+def sample_knn_noise(latents: torch.FloatTensor, k: int) -> torch.FloatTensor:
+    if k < 1:
+        raise ValueError("k must be greater than or equal to 1")
+
+    with torch.no_grad():
+        batch_size = latents.shape[0]
+        candidates = torch.randn((batch_size, k, *latents.shape[1:]), device=latents.device, dtype=latents.dtype)
+        return select_nearest_noise_candidate(latents, candidates)
+
+
+def sample_training_noise(args: argparse.Namespace, latents: torch.FloatTensor) -> torch.FloatTensor:
+    knn_noise_k = int(getattr(args, "knn_noise_k", 0))
+    if knn_noise_k < 0:
+        raise ValueError("knn_noise_k must be greater than or equal to 0")
+    if knn_noise_k > 0:
+        return sample_knn_noise(latents, knn_noise_k)
+    return torch.randn_like(latents, device=latents.device)
+
+
+def apply_immiscible_image_scale(args: argparse.Namespace, latents: torch.FloatTensor) -> torch.FloatTensor:
+    image_scale = float(getattr(args, "immiscible_image_scale", 1.0))
+    if image_scale < 1.0:
+        raise ValueError("immiscible_image_scale must be greater than or equal to 1.0")
+    if image_scale == 1.0:
+        return latents
+    return latents * image_scale
+
+
 def apply_cep_noise(
     conds: Union[List[Union[torch.Tensor, None]], Tuple[Union[torch.Tensor, None]], torch.Tensor],
     cep_noise: float,
@@ -6291,7 +6363,7 @@ def get_noise_noisy_latents_and_timesteps(
     args, noise_scheduler, latents: torch.FloatTensor
 ) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.IntTensor]:
     # Sample noise that we'll add to the latents
-    noise = torch.randn_like(latents, device=latents.device)
+    noise = sample_training_noise(args, latents)
     if args.noise_offset:
         if args.noise_offset_random_strength:
             noise_offset = torch.rand(1, device=latents.device) * args.noise_offset

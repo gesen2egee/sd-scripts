@@ -58,6 +58,17 @@ class NetworkTrainer:
         self.vae_scale_factor = 0.18215
         self.is_sdxl = False
 
+    @staticmethod
+    def get_optimizer_avg_lr(optimizer) -> Optional[float]:
+        if optimizer is None:
+            return None
+
+        for opt in (optimizer, getattr(optimizer, "optimizer", None)):
+            if opt is not None and hasattr(opt, "get_avg_learning_rate"):
+                return float(opt.get_avg_learning_rate())
+
+        return None
+
     # TODO 他のスクリプトと共通化する
     def generate_step_logs(
         self,
@@ -115,6 +126,10 @@ class NetworkTrainer:
                     logs[f"lr/d*lr/{lr_desc}"] = opt.param_groups[i]["d"] * opt.param_groups[i]["lr"]
                     if "effective_lr" in opt.param_groups[i]:
                         logs[f"lr/d*eff_lr/{lr_desc}"] = opt.param_groups[i]["d"] * opt.param_groups[i]["effective_lr"]
+
+        optimizer_avg_lr = self.get_optimizer_avg_lr(optimizer)
+        if optimizer_avg_lr is not None:
+            logs["lr/avg_lr"] = optimizer_avg_lr
 
         return logs
 
@@ -246,7 +261,8 @@ class NetworkTrainer:
         return vae.encode(images).latent_dist.sample()
 
     def shift_scale_latents(self, args, latents: torch.FloatTensor) -> torch.FloatTensor:
-        return latents * self.vae_scale_factor
+        latents = latents * self.vae_scale_factor
+        return train_util.apply_immiscible_image_scale(args, latents)
 
     def get_noise_pred_and_target(
         self,
@@ -1042,6 +1058,8 @@ class NetworkTrainer:
             "ss_seed": args.seed,
             "ss_lowram": args.lowram,
             "ss_noise_offset": args.noise_offset,
+            "ss_knn_noise_k": getattr(args, "knn_noise_k", 0),
+            "ss_immiscible_image_scale": getattr(args, "immiscible_image_scale", 1.0),
             "ss_multires_noise_iterations": args.multires_noise_iterations,
             "ss_multires_noise_discount": args.multires_noise_discount,
             "ss_adaptive_noise_scale": args.adaptive_noise_scale,

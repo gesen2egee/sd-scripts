@@ -181,7 +181,7 @@ class CdkaModule(torch.nn.Module):
             nn.init.kaiming_normal_(self.lokr_w2, a=math.sqrt(5))
         elif w2_init == "zeros":
             nn.init.zeros_(self.lokr_w2)
-        elif w2_init == "mica":
+        elif w2_init in ("mica", "mica_both"):
             org_weight = org_module.weight.data.detach().clone().float()
             if self.is_conv and self.conv_mode == "flat":
                 org_weight = org_weight.flatten(1)
@@ -200,7 +200,8 @@ class CdkaModule(torch.nn.Module):
             v_min = Vh[-1, :]  # Right singular vector corresponding to the smallest singular value
             w2_init_val = v_min.reshape(self.out_l, self.in_m)
             self.lokr_w2.data.copy_(w2_init_val.to(self.lokr_w2.dtype))
-            self.lokr_w2.requires_grad = False
+            if w2_init == "mica":
+                self.lokr_w2.requires_grad = False
         else:
             raise ValueError(f"Unknown w2_init mode: {w2_init}")
 
