@@ -689,6 +689,55 @@ class PatchEmbed(nn.Module):
         return x
 
 
+try:
+    torch.is_autocast_enabled("cuda")
+    _is_autocast_enabled_for_device = torch.is_autocast_enabled
+except TypeError:
+    def _is_autocast_enabled_for_device(device_type):  # noqa: ARG001
+        return torch.is_autocast_enabled()
+
+
+def _is_forward_patched(module: nn.Module) -> bool:
+    if "forward" in module.__dict__:
+        return True
+    return type(module).forward is not nn.Linear.forward
+
+
+def _run_adaln_modulation_fp32(modulation: nn.Sequential, x: torch.Tensor) -> torch.Tensor:
+    out = x
+    for module in modulation:
+        if isinstance(module, nn.Linear):
+            if _is_forward_patched(module):
+                out = module(out.to(module.weight.dtype))
+            else:
+                weight = module.weight.float()
+                bias = module.bias.float() if module.bias is not None else None
+                out = F.linear(out.float(), weight, bias)
+        else:
+            out = module(out)
+    return out.float()
+
+
+def _modulate_adaln(
+    modulation: nn.Sequential,
+    emb: torch.Tensor,
+    lora_addend: Optional[torch.Tensor],
+    *,
+    n_chunks: int,
+    do_fp32: bool,
+) -> Tuple[torch.Tensor, ...]:
+    if do_fp32:
+        with torch.amp.autocast(device_type=emb.device.type, enabled=False):
+            out = _run_adaln_modulation_fp32(modulation, emb)
+            if lora_addend is not None:
+                out = out + lora_addend
+            return out.chunk(n_chunks, dim=-1)
+    out = modulation(emb)
+    if lora_addend is not None:
+        out = out + lora_addend
+    return out.chunk(n_chunks, dim=-1)
+
+
 # Final Layer
 class FinalLayer(nn.Module):
     """Final layer with AdaLN modulation + unpatchify."""
@@ -740,15 +789,19 @@ class FinalLayer(nn.Module):
         adaln_lora_B_T_3D: Optional[torch.Tensor] = None,
         use_fp32: bool = False,
     ):
-        # Compute AdaLN modulation parameters (in float32 when fp16 to avoid overflow in Linear layers)
-        with torch.autocast(device_type=x_B_T_H_W_D.device.type, dtype=torch.float32, enabled=use_fp32):
-            if self.use_adaln_lora:
-                assert adaln_lora_B_T_3D is not None
-                shift_B_T_D, scale_B_T_D = (
-                    self.adaln_modulation(emb_B_T_D) + adaln_lora_B_T_3D[:, :, : 2 * self.hidden_size]
-                ).chunk(2, dim=-1)
-            else:
-                shift_B_T_D, scale_B_T_D = self.adaln_modulation(emb_B_T_D).chunk(2, dim=-1)
+        do_fp32 = use_fp32 and _is_autocast_enabled_for_device(x_B_T_H_W_D.device.type)
+
+        if self.use_adaln_lora:
+            assert adaln_lora_B_T_3D is not None
+            lora_addend = adaln_lora_B_T_3D[:, :, : 2 * self.hidden_size]
+            if do_fp32:
+                lora_addend = lora_addend.float()
+        else:
+            lora_addend = None
+
+        shift_B_T_D, scale_B_T_D = _modulate_adaln(
+            self.adaln_modulation, emb_B_T_D, lora_addend, n_chunks=2, do_fp32=do_fp32
+        )
 
         shift_B_T_1_1_D = rearrange(shift_B_T_D, "b t d -> b t 1 1 d")
         scale_B_T_1_1_D = rearrange(scale_B_T_D, "b t d -> b t 1 1 d")
@@ -868,33 +921,29 @@ class Block(nn.Module):
         adaln_lora_B_T_3D: Optional[torch.Tensor] = None,
         extra_per_block_pos_emb: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        if use_fp32:
-            # Cast to float32 for better numerical stability in residual connections. Each module will cast back to float16 by enclosing autocast context.
+        do_fp32 = use_fp32 and _is_autocast_enabled_for_device(x_B_T_H_W_D.device.type)
+
+        if do_fp32:
             x_B_T_H_W_D = x_B_T_H_W_D.float()
 
         if extra_per_block_pos_emb is not None:
             x_B_T_H_W_D = x_B_T_H_W_D + extra_per_block_pos_emb
 
-        # Compute AdaLN modulation parameters (in float32 when fp16 to avoid overflow in Linear layers)
-        with torch.autocast(device_type=x_B_T_H_W_D.device.type, dtype=torch.float32, enabled=use_fp32):
-            if self.use_adaln_lora:
-                shift_self_attn_B_T_D, scale_self_attn_B_T_D, gate_self_attn_B_T_D = (
-                    self.adaln_modulation_self_attn(emb_B_T_D) + adaln_lora_B_T_3D
-                ).chunk(3, dim=-1)
-                shift_cross_attn_B_T_D, scale_cross_attn_B_T_D, gate_cross_attn_B_T_D = (
-                    self.adaln_modulation_cross_attn(emb_B_T_D) + adaln_lora_B_T_3D
-                ).chunk(3, dim=-1)
-                shift_mlp_B_T_D, scale_mlp_B_T_D, gate_mlp_B_T_D = (self.adaln_modulation_mlp(emb_B_T_D) + adaln_lora_B_T_3D).chunk(
-                    3, dim=-1
-                )
-            else:
-                shift_self_attn_B_T_D, scale_self_attn_B_T_D, gate_self_attn_B_T_D = self.adaln_modulation_self_attn(
-                    emb_B_T_D
-                ).chunk(3, dim=-1)
-                shift_cross_attn_B_T_D, scale_cross_attn_B_T_D, gate_cross_attn_B_T_D = self.adaln_modulation_cross_attn(
-                    emb_B_T_D
-                ).chunk(3, dim=-1)
-                shift_mlp_B_T_D, scale_mlp_B_T_D, gate_mlp_B_T_D = self.adaln_modulation_mlp(emb_B_T_D).chunk(3, dim=-1)
+        if self.use_adaln_lora:
+            assert adaln_lora_B_T_3D is not None
+            lora_addend = adaln_lora_B_T_3D.float() if do_fp32 else adaln_lora_B_T_3D
+        else:
+            lora_addend = None
+
+        shift_self_attn_B_T_D, scale_self_attn_B_T_D, gate_self_attn_B_T_D = _modulate_adaln(
+            self.adaln_modulation_self_attn, emb_B_T_D, lora_addend, n_chunks=3, do_fp32=do_fp32
+        )
+        shift_cross_attn_B_T_D, scale_cross_attn_B_T_D, gate_cross_attn_B_T_D = _modulate_adaln(
+            self.adaln_modulation_cross_attn, emb_B_T_D, lora_addend, n_chunks=3, do_fp32=do_fp32
+        )
+        shift_mlp_B_T_D, scale_mlp_B_T_D, gate_mlp_B_T_D = _modulate_adaln(
+            self.adaln_modulation_mlp, emb_B_T_D, lora_addend, n_chunks=3, do_fp32=do_fp32
+        )
 
         # Reshape for broadcasting: (B, T, D) -> (B, T, 1, 1, D)
         shift_self_attn_B_T_1_1_D = rearrange(shift_self_attn_B_T_D, "b t d -> b t 1 1 d")
