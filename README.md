@@ -47,6 +47,9 @@ If you find this project helpful, please consider supporting its development via
 
 ### Change History
 
+- **Version 0.10.6 (2026-06-12):**
+    - Stable version before refactoring merge.
+
 - **Version 0.10.5 (2026-05-08):**
     - Support for transformers version 5 and later has been added. Thanks to marcus165090-spec for [PR #2315](https://github.com/kohya-ss/sd-scripts/pull/2315) (followed by [PR #2316](https://github.com/kohya-ss/sd-scripts/pull/2316)).
         - The `transformers` version in `requirements.txt` remains 4.x, but it also works with 5.x. If you use 5.x for any reason, please also update `diffusers` to the latest version.
